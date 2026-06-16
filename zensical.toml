@@ -1,0 +1,42 @@
+[project]
+docs_dir = "docs"
+site_dir = "site"
+site_name = "RecBench Documentation"
+site_description = "Engineering and maintenance documentation for the RecBench recommendation benchmark project."
+site_author = "RecBench Contributors"
+copyright = "Copyright (c) 2026 RecBench Contributors"
+nav = [
+  "index.md",
+  "getting-started.md",
+  { "Concepts" = [
+    "concepts/architecture.md",
+    "concepts/configuration.md",
+  ]},
+  { "Experiments" = [
+    "experiments/index.md",
+  ]},
+  { "Guides" = [
+    "guides/index.md",
+  ]},
+  { "Papers" = [
+    "papers/index.md",
+  ]},
+  { "Project" = [
+    "project/structure.md",
+    "project/api-contracts.md",
+    "project/artifacts.md",
+    "project/datasets.md",
+    "project/evaluation.md",
+    "project/pipeline.md",
+    "project/benchmarking.md",
+    "project/development.md",
+    "project/models.md",
+  ]},
+  { "Operations" = [
+    "operations/overview.md",
+    "operations/maintenance.md",
+  ]},
+]
+
+[project.theme]
+variant = "modern"
