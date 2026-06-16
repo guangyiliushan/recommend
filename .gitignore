@@ -1,0 +1,140 @@
+# Python
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+*.whl
+
+
+# Build & Distribution
+
+dist/
+build/
+*.tar.gz
+*.zip
+
+
+# Virtual environments & Package managers
+
+.venv/
+venv/
+env/
+.python-version
+
+# uv (keep uv.lock — it is tracked by default)
+__pypackages__/
+
+# pip
+pip-wheel-metadata/
+pip-log.txt
+pip-delete-this-directory.txt
+
+
+# IDE & Editors
+
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-*
+*.code-workspace
+.history/
+
+
+# OS artifacts
+
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+
+# Data (large files)
+
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+data/splits/*
+!data/splits/.gitkeep
+
+
+# Experiment Outputs
+
+outputs/
+!outputs/.gitkeep
+
+
+# ML Tracking
+
+mlruns/
+wandb/
+lightning_logs/
+tensorboard/
+
+
+# Documentation site (zensical)
+
+site/
+
+
+# Jupyter Notebooks
+
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+.jupyter/
+
+
+# Testing & Coverage
+
+.coverage
+.coverage.*
+*.cover
+coverage.xml
+coverage_html/
+htmlcov/
+.pytest_cache/
+.tox/
+benchmarks/**/.benchmarks/
+
+
+# Linting & Type Checking
+
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+
+# Secrets & Environment
+
+*.env
+*.env.*
+!.env.example
+*.secret
+
+
+# Misc
+
+*.log
+*.pid
+*.pyre
+
+# IDE
+
+.vscode/
+.idea/
+.trae/
+.codebuddy/
+.windserf/
+.devin/
+.cloudcode/
+.codex/
+.antigravity/
+.qoder/
+.kimi/

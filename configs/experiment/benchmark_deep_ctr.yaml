@@ -1,0 +1,25 @@
+# Benchmark: Deep CTR Era (2016–2019)
+# Models: YouTube DNN, Wide&Deep, DeepFM, DIN, DIEN, DLRM
+
+experiment:
+  name: "benchmark_deep_ctr"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+
+datasets:
+  - "criteo_kaggle"
+
+models:
+  - name: "YouTubeDNN"
+    family: "deep_ctr"
+  - name: "WideDeep"
+    family: "deep_ctr"
+  - name: "DeepFM"
+    family: "deep_ctr"
+  - name: "DIN"
+    family: "deep_ctr"
+  - name: "DIEN"
+    family: "deep_ctr"
+  - name: "DLRM"
+    family: "deep_ctr"

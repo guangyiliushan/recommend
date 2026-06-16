@@ -1,0 +1,27 @@
+# Benchmark: PCVR Multi-Task Models (2018–2026)
+# Models: ESMM, ESM2, DESMM, HM3, DCMT, ChorusCVR, RankUp
+
+experiment:
+  name: "benchmark_pcvr"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+
+datasets:
+  - "taobao_behavior"
+
+models:
+  - name: "ESMM"
+    family: "pcvr"
+  - name: "ESM2"
+    family: "pcvr"
+  - name: "DESMM"
+    family: "pcvr"
+  - name: "HM3"
+    family: "pcvr"
+  - name: "DCMT"
+    family: "pcvr"
+  - name: "ChorusCVR"
+    family: "pcvr"
+  - name: "RankUp"
+    family: "pcvr"

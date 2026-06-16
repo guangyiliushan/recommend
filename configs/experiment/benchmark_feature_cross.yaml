@@ -1,0 +1,21 @@
+# Benchmark: Feature Crossing
+# Models: DCN, DCNv2, DHEN, RankMixer
+
+experiment:
+  name: "benchmark_feature_cross"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+
+datasets:
+  - "criteo_kaggle"
+
+models:
+  - name: "DCN"
+    family: "feature_cross"
+  - name: "DCNv2"
+    family: "feature_cross"
+  - name: "DHEN"
+    family: "feature_cross"
+  - name: "RankMixer"
+    family: "feature_cross"

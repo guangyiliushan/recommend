@@ -1,0 +1,29 @@
+# Benchmark: Classical Era (2001–2015)
+# Models: ItemCF, MF, FM, DSSM, GRU4Rec
+
+experiment:
+  name: "benchmark_classical"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+
+datasets:
+  - "movielens_1m"
+  - "criteo_kaggle"
+
+models:
+  - name: "ItemCF"
+    family: "classical"
+    params: { top_k: 50 }
+  - name: "MF"
+    family: "classical"
+    params: { embedding_dim: 64, l2_reg: 1e-5 }
+  - name: "FM"
+    family: "classical"
+    params: { embedding_dim: 16, l2_reg: 1e-5 }
+  - name: "DSSM"
+    family: "classical"
+    params: { embedding_dim: 64, hidden_dims: [256, 128] }
+  - name: "GRU4Rec"
+    family: "classical"
+    params: { embedding_dim: 128, hidden_dim: 256, num_layers: 1 }

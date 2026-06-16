@@ -1,0 +1,10 @@
+# Criteo Kaggle CTR dataset config
+# 13 continuous features + 26 categorical features
+# Task: CTR prediction
+
+name: "criteo_kaggle"
+data_dir: "./data"
+split_ratios: [0.8, 0.1, 0.1]
+batch_size: 4096
+num_workers: 8
+neg_sample_count: 4

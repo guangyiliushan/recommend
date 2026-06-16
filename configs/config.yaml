@@ -1,0 +1,71 @@
+# RecBench Main Configuration
+# Usage:
+#   python -m src.run experiment=benchmark_classical
+#   python -m src.run model=deepfm data=criteo
+
+defaults:
+  - _self_
+  - override hydra/hydra_logging: disabled
+  - override hydra/job_logging: disabled
+
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+
+experiment:
+  name: "default"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+  log_level: "INFO"
+  track_with: "mlflow"
+
+data:
+  name: "movielens_1m"
+  data_dir: "./data"
+  split_ratios: [0.8, 0.1, 0.1]
+  batch_size: 256
+  num_workers: 4
+  max_seq_len: 50
+  min_seq_len: 5
+  neg_sample_count: 4
+
+model:
+  name: "DeepFM"
+  family: "deep_ctr"
+  params:
+    embedding_dim: 16
+    hidden_dims: [256, 128, 64]
+    dropout: 0.2
+    use_bn: true
+
+training:
+  epochs: 20
+  learning_rate: 1.0e-3
+  weight_decay: 1.0e-5
+  optimizer: "adam"
+  scheduler: "cosine"
+  warmup_epochs: 2
+  early_stopping_patience: 5
+  gradient_clip_val: 1.0
+  mixed_precision: "fp16"
+  accumulate_grad_batches: 1
+  val_check_interval: 0.5
+
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - roc_auc
+    - pr_auc
+    - sensitivity
+    - specificity
+    - ppv
+    - npv
+  ranking_k: [5, 10, 20, 50]
+  threshold: 0.5
+  generate_curves: true
+  statistical_test: "mcnemar"

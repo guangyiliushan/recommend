@@ -1,0 +1,26 @@
+# Benchmark: Sequence Recommendation
+# Models: SASRec, BERT4Rec, MIMN, SIM, ETA, SDIM
+
+experiment:
+  name: "benchmark_sequence"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+
+datasets:
+  - "movielens_1m"
+  - "taobao_behavior"
+
+models:
+  - name: "SASRec"
+    family: "sequence"
+  - name: "BERT4Rec"
+    family: "sequence"
+  - name: "MIMN"
+    family: "sequence"
+  - name: "SIM"
+    family: "sequence"
+  - name: "ETA"
+    family: "sequence"
+  - name: "SDIM"
+    family: "sequence"

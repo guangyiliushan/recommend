@@ -1,0 +1,63 @@
+# Full Benchmark — All 50+ models across all datasets
+# WARNING: This will take a very long time to run.
+
+experiment:
+  name: "benchmark_all"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+
+datasets:
+  - "movielens_1m"
+  - "criteo_kaggle"
+  - "taobao_behavior"
+
+models:
+  - { name: "ItemCF", family: "classical" }
+  - { name: "MF", family: "classical" }
+  - { name: "FM", family: "classical" }
+  - { name: "DSSM", family: "classical" }
+  - { name: "GRU4Rec", family: "classical" }
+  - { name: "YouTubeDNN", family: "deep_ctr" }
+  - { name: "WideDeep", family: "deep_ctr" }
+  - { name: "DeepFM", family: "deep_ctr" }
+  - { name: "DIN", family: "deep_ctr" }
+  - { name: "DIEN", family: "deep_ctr" }
+  - { name: "DLRM", family: "deep_ctr" }
+  - { name: "SASRec", family: "sequence" }
+  - { name: "BERT4Rec", family: "sequence" }
+  - { name: "MIMN", family: "sequence" }
+  - { name: "SIM", family: "sequence" }
+  - { name: "ETA", family: "sequence" }
+  - { name: "SDIM", family: "sequence" }
+  - { name: "DCN", family: "feature_cross" }
+  - { name: "DCNv2", family: "feature_cross" }
+  - { name: "DHEN", family: "feature_cross" }
+  - { name: "RankMixer", family: "feature_cross" }
+  - { name: "ESMM", family: "pcvr" }
+  - { name: "ESM2", family: "pcvr" }
+  - { name: "NCS4CVR", family: "pcvr" }
+  - { name: "DESMM", family: "pcvr" }
+  - { name: "HM3", family: "pcvr" }
+  - { name: "FollowProphet", family: "pcvr" }
+  - { name: "MSEN", family: "pcvr" }
+  - { name: "DCMT", family: "pcvr" }
+  - { name: "ESMC", family: "pcvr" }
+  - { name: "CST", family: "pcvr" }
+  - { name: "ChorusCVR", family: "pcvr" }
+  - { name: "CounterfactualCVR", family: "pcvr" }
+  - { name: "EKTM", family: "pcvr" }
+  - { name: "RankUp", family: "pcvr" }
+  - { name: "CounterfactualMTLDF", family: "pcvr" }
+  - { name: "HSTU", family: "unified" }
+  - { name: "InterFormer", family: "unified" }
+  - { name: "OneTrans", family: "unified" }
+  - { name: "HoMer", family: "unified" }
+  - { name: "MTmixAtt", family: "unified" }
+  - { name: "HyFormer", family: "unified" }
+  - { name: "GenRec", family: "generative" }
+  - { name: "IDGenRec", family: "generative" }
+  - { name: "RecGPT", family: "generative" }
+  - { name: "SpecGR", family: "generative" }
+  - { name: "COBRA", family: "generative" }
+  - { name: "LLaDARec", family: "generative" }

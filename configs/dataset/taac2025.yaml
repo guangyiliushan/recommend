@@ -1,0 +1,9 @@
+# TAAC 2025 advertising dataset config
+# Full-modal generative recommendation dataset
+# Multi-modal features: text, image, video
+
+name: "taac2025"
+data_dir: "./data"
+batch_size: 64
+num_workers: 4
+max_seq_len: 50
