@@ -22,7 +22,7 @@ experiment:
   track_with: "mlflow"
 
 data:
-  name: "movielens_1m"
+  name: "taac2026_second_round"
   data_dir: "./data"
   split_ratios: [0.8, 0.1, 0.1]
   batch_size: 256
