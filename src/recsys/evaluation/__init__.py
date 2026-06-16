@@ -1,1 +1,141 @@
-"""Evaluation: metrics, ranking, curves, visualization, statistical testing."""
+"""评估层模块。
+
+四层分离架构：
+- metrics.py: 点预测数值计算（分类指标）
+- ranking.py: 分组排序数值计算
+- visualization.py: 曲线与图表产物
+- evaluator.py: 调度、组装和输出契约
+
+主入口:
+    from recsys.evaluation import evaluate, EvaluationConfig, EvaluationResult
+"""
+
+from recsys.evaluation.evaluator import (
+    EvaluationConfig,
+    EvaluationResult,
+    evaluate,
+    evaluate_multitask,
+    evaluate_pointwise,
+    evaluate_ranking,
+)
+from recsys.evaluation.metrics import (
+    CANONICAL_METRICS,
+    METRIC_ALIASES,
+    ClassificationMetricsResult,
+    ConfusionMatrixResult,
+    compute_accuracy,
+    compute_average_precision,
+    compute_balanced_accuracy,
+    compute_brier_score,
+    compute_confusion_matrix,
+    compute_confusion_matrix_from_scores,
+    compute_f1,
+    compute_fnr,
+    compute_fpr,
+    compute_log_loss,
+    compute_npv,
+    compute_pr_auc,
+    compute_pr_curve,
+    compute_precision,
+    compute_recall,
+    compute_roc_auc,
+    compute_roc_curve,
+    compute_specificity,
+    evaluate_binary_classification,
+    evaluate_multiclass_classification,
+    normalize_metric_name,
+)
+from recsys.evaluation.ranking import (
+    CANONICAL_RANKING_METRICS,
+    RANKING_METRIC_ALIASES,
+    GroupRankingResult,
+    RankingMetricsResult,
+    compute_ap,
+    compute_hit_rate_at_k,
+    compute_mrr,
+    compute_ndcg_at_k,
+    compute_precision_at_k,
+    compute_recall_at_k,
+    evaluate_ranking_from_bundle,
+    evaluate_single_group,
+    normalize_ranking_metric_name,
+)
+from recsys.evaluation.visualization import (
+    CurveData,
+    VisualizationOutput,
+    export_metrics_csv,
+    export_pr_curve,
+    export_ranking_metrics_at_k,
+    export_roc_curve,
+    export_threshold_sweep,
+    plot_metric_leaderboard,
+    plot_metrics_at_k,
+    plot_pr_curve,
+    plot_roc_curve,
+    visualize_classification_results,
+    visualize_ranking_results,
+)
+
+__all__ = [
+    # evaluator
+    "evaluate",
+    "evaluate_pointwise",
+    "evaluate_ranking",
+    "evaluate_multitask",
+    "EvaluationConfig",
+    "EvaluationResult",
+    # metrics
+    "METRIC_ALIASES",
+    "CANONICAL_METRICS",
+    "normalize_metric_name",
+    "ConfusionMatrixResult",
+    "ClassificationMetricsResult",
+    "compute_confusion_matrix",
+    "compute_confusion_matrix_from_scores",
+    "compute_accuracy",
+    "compute_precision",
+    "compute_recall",
+    "compute_f1",
+    "compute_specificity",
+    "compute_npv",
+    "compute_fpr",
+    "compute_fnr",
+    "compute_balanced_accuracy",
+    "compute_roc_auc",
+    "compute_pr_auc",
+    "compute_average_precision",
+    "compute_log_loss",
+    "compute_brier_score",
+    "compute_roc_curve",
+    "compute_pr_curve",
+    "evaluate_binary_classification",
+    "evaluate_multiclass_classification",
+    # ranking
+    "RANKING_METRIC_ALIASES",
+    "CANONICAL_RANKING_METRICS",
+    "normalize_ranking_metric_name",
+    "GroupRankingResult",
+    "RankingMetricsResult",
+    "compute_ndcg_at_k",
+    "compute_mrr",
+    "compute_hit_rate_at_k",
+    "compute_recall_at_k",
+    "compute_precision_at_k",
+    "compute_ap",
+    "evaluate_single_group",
+    "evaluate_ranking_from_bundle",
+    # visualization
+    "CurveData",
+    "VisualizationOutput",
+    "export_roc_curve",
+    "export_pr_curve",
+    "export_threshold_sweep",
+    "export_ranking_metrics_at_k",
+    "export_metrics_csv",
+    "plot_roc_curve",
+    "plot_pr_curve",
+    "plot_metrics_at_k",
+    "plot_metric_leaderboard",
+    "visualize_classification_results",
+    "visualize_ranking_results",
+]

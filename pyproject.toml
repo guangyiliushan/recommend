@@ -45,6 +45,8 @@ dependencies = [
     "plotly>=5.16.0",
     "tqdm>=4.65.0",
     "loguru>=0.7.0",
+    "datasets>=3.0.0",
+    "huggingface_hub>=0.25.0",
 ]
 
 [project.optional-dependencies]
@@ -56,6 +58,7 @@ dev = [
     "ruff>=0.3.0",
     "pre-commit>=3.4.0",
     "jupyter>=1.0.0",
+    "zensical",
 ]
 gpu = [
     "flash-attn>=2.3.0",
@@ -96,6 +99,9 @@ ignore = ["E501"]  # line length handled by black
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests that require network access or real data",
+]
 
 [tool.coverage.run]
 source = ["src"]

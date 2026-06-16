@@ -1,26 +1,21 @@
 # Benchmark: Sequence Recommendation
 # Models: SASRec, BERT4Rec, MIMN, SIM, ETA, SDIM
+# 状态：planned — 模型和数据集均未实现
+#
+# 原引用：SASRec, BERT4Rec, MIMN, SIM, ETA, SDIM + movielens_1m, taobao_behavior
+# 这些模型当前均为占位文件，数据集也未注册。
+# 本文件保留为预留模板，待模型实现后启用。
 
-experiment:
-  name: "benchmark_sequence"
-  seed: 42
-  device: "auto"
-  output_dir: "./outputs"
-
-datasets:
-  - "movielens_1m"
-  - "taobao_behavior"
-
-models:
-  - name: "SASRec"
-    family: "sequence"
-  - name: "BERT4Rec"
-    family: "sequence"
-  - name: "MIMN"
-    family: "sequence"
-  - name: "SIM"
-    family: "sequence"
-  - name: "ETA"
-    family: "sequence"
-  - name: "SDIM"
-    family: "sequence"
+# experiment:
+#   name: "benchmark_sequence"
+#   seed: 42
+#   device: "auto"
+#   output_dir: "./outputs"
+#
+# datasets:
+#   - "movielens_1m"
+#   - "taobao_behavior"
+#
+# models:
+#   - name: "SASRec"
+#     family: "sequence"

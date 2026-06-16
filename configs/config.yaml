@@ -1,7 +1,7 @@
 # RecBench Main Configuration
-# Usage:
-#   python -m src.run experiment=benchmark_classical
-#   python -m src.run model=deepfm data=criteo
+# 用法：
+#   uv run python examples/run_itemcf_demo.py
+#   或通过 Python API 构造 ExperimentConfig 后调 run_experiment()
 
 defaults:
   - _self_
@@ -14,58 +14,61 @@ hydra:
     dir: .
 
 experiment:
-  name: "default"
-  seed: 42
-  device: "auto"
-  output_dir: "./outputs"
-  log_level: "INFO"
-  track_with: "mlflow"
+  name: "itemcf_demo"
+  tags: [baseline, ranking]
+  notes: "最小可运行基线"
+  track_with: null
 
 data:
-  name: "movielens_1m"
+  name: "taac2026_data_sample"
   data_dir: "./data"
   split_ratios: [0.8, 0.1, 0.1]
   batch_size: 256
   num_workers: 4
   max_seq_len: 50
-  min_seq_len: 5
+  min_seq_len: 2
   neg_sample_count: 4
 
 model:
-  name: "DeepFM"
-  family: "deep_ctr"
+  name: "itemcf"
+  family: "classical"
+  task_type: "ranking"
+  problem_type: "implicit_ranking"
   params:
-    embedding_dim: 16
-    hidden_dims: [256, 128, 64]
-    dropout: 0.2
-    use_bn: true
+    similarity: cosine
+    top_k_neighbors: 50
+    recommend_k: 10
+    normalize: true
 
 training:
-  epochs: 20
+  epochs: 10
   learning_rate: 1.0e-3
   weight_decay: 1.0e-5
   optimizer: "adam"
-  scheduler: "cosine"
-  warmup_epochs: 2
+  scheduler: null
+  warmup_epochs: 0
   early_stopping_patience: 5
-  gradient_clip_val: 1.0
-  mixed_precision: "fp16"
+  gradient_clip_val: null
+  mixed_precision: null
   accumulate_grad_batches: 1
-  val_check_interval: 0.5
 
 evaluation:
   metrics:
-    - accuracy
-    - precision
-    - recall
-    - f1
-    - roc_auc
-    - pr_auc
-    - sensitivity
-    - specificity
-    - ppv
-    - npv
-  ranking_k: [5, 10, 20, 50]
+    - ndcg@10
+    - hit_rate@10
+    - recall@10
+    - mrr
+  ranking_k: [10]
   threshold: 0.5
-  generate_curves: true
-  statistical_test: "mcnemar"
+  generate_curves: false
+  statistical_test: null
+
+runtime:
+  device: auto
+  seed: 42
+  deterministic: false
+  log_level: INFO
+  output_root: ./outputs
+  resume_from: null
+  fast_dev_run: false
+  num_devices: 1

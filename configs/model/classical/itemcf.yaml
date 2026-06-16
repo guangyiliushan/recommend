@@ -1,0 +1,26 @@
+# @package _global_
+# ItemCF (Item-Based Collaborative Filtering) 模型配置
+#
+# Sarwar et al. "Item-based collaborative filtering recommendation algorithms" (2001)
+# 非训练式模型：通过 fit 构建相似度矩阵，predict 直接推理
+
+name: itemcf
+family: classical
+task_type: ranking
+supports_training: false
+
+params:
+  # 相似度计算策略: "cosine" | "iuf"
+  similarity: cosine
+
+  # 相似度矩阵 Top-K 截断（每个物品只保留最相似的 K 个邻居）
+  top_k_neighbors: 50
+
+  # 推荐列表长度
+  recommend_k: 10
+
+  # 是否对相似度矩阵做最大-最小归一化
+  normalize: true
+
+  # 评估时的 Top-K 列表
+  eval_k_list: [5, 10, 20]

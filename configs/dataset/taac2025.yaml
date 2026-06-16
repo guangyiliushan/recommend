@@ -1,9 +1,23 @@
 # TAAC 2025 advertising dataset config
-# Full-modal generative recommendation dataset
-# Multi-modal features: text, image, video
+# Full-modal generative recommendation dataset from TencentGR
+# Multi-modal features: text, image, video ad creatives
+#
+# Available variants:
+#   taac2025_1M  — TAAC2025/TencentGR-1M  (~1M  sequences, ~660k  candidates)
+#   taac2025_10M — TAAC2025/TencentGR-10M (~10M sequences, ~3.64M candidates)
+#
+# HuggingFace:
+#   https://huggingface.co/datasets/TAAC2025/TencentGR-1M
+#   https://huggingface.co/datasets/TAAC2025/TencentGR-10M
+#
+# Reference: arxiv:2604.04976
 
-name: "taac2025"
+name: "taac2025_10M"
+version: "10M"
 data_dir: "./data"
+split_ratios: [0.8, 0.1, 0.1]
 batch_size: 64
 num_workers: 4
 max_seq_len: 50
+min_seq_len: 5
+neg_sample_count: 4

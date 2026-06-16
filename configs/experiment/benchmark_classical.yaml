@@ -1,5 +1,10 @@
 # Benchmark: Classical Era (2001–2015)
-# Models: ItemCF, MF, FM, DSSM, GRU4Rec
+# 当前仅 itemcf 已实现，其余经典模型仍为占位
+# 当前可运行配置：itemcf (非训练) + dssm (训练)
+# 数据集：taac2026_data_sample (唯一已注册且可用)
+#
+# 用法:
+#   python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
 
 experiment:
   name: "benchmark_classical"
@@ -8,22 +13,10 @@ experiment:
   output_dir: "./outputs"
 
 datasets:
-  - "movielens_1m"
-  - "criteo_kaggle"
+  - "taac2026_data_sample"
 
 models:
-  - name: "ItemCF"
+  - name: "itemcf"
     family: "classical"
-    params: { top_k: 50 }
-  - name: "MF"
+  - name: "dssm"
     family: "classical"
-    params: { embedding_dim: 64, l2_reg: 1e-5 }
-  - name: "FM"
-    family: "classical"
-    params: { embedding_dim: 16, l2_reg: 1e-5 }
-  - name: "DSSM"
-    family: "classical"
-    params: { embedding_dim: 64, hidden_dims: [256, 128] }
-  - name: "GRU4Rec"
-    family: "classical"
-    params: { embedding_dim: 128, hidden_dim: 256, num_layers: 1 }

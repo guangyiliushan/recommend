@@ -1,23 +1,20 @@
 # Benchmark: Unified Architecture & Generative (2024–2026)
 # Models: HSTU, OneTrans, HyFormer, GenRec, COBRA
+# 状态：planned — 模型和数据集均未实现
+#
+# 原引用：HSTU, OneTrans, HyFormer, GenRec, COBRA + criteo_kaggle
+# 这些模型当前均为占位文件，数据集也未注册。
+# 本文件保留为预留模板，待模型实现后启用。
 
-experiment:
-  name: "benchmark_unified_gen"
-  seed: 42
-  device: "auto"
-  output_dir: "./outputs"
-
-datasets:
-  - "criteo_kaggle"
-
-models:
-  - name: "HSTU"
-    family: "unified"
-  - name: "OneTrans"
-    family: "unified"
-  - name: "HyFormer"
-    family: "unified"
-  - name: "GenRec"
-    family: "generative"
-  - name: "COBRA"
-    family: "generative"
+# experiment:
+#   name: "benchmark_unified_gen"
+#   seed: 42
+#   device: "auto"
+#   output_dir: "./outputs"
+#
+# datasets:
+#   - "criteo_kaggle"
+#
+# models:
+#   - name: "HSTU"
+#     family: "unified"

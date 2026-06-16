@@ -1,21 +1,20 @@
 # Benchmark: Feature Crossing
 # Models: DCN, DCNv2, DHEN, RankMixer
+# 状态：planned — 模型和数据集均未实现
+#
+# 原引用：DCN, DCNv2, DHEN, RankMixer + criteo_kaggle
+# 这些模型当前均为占位文件，数据集也未注册。
+# 本文件保留为预留模板，待模型实现后启用。
 
-experiment:
-  name: "benchmark_feature_cross"
-  seed: 42
-  device: "auto"
-  output_dir: "./outputs"
-
-datasets:
-  - "criteo_kaggle"
-
-models:
-  - name: "DCN"
-    family: "feature_cross"
-  - name: "DCNv2"
-    family: "feature_cross"
-  - name: "DHEN"
-    family: "feature_cross"
-  - name: "RankMixer"
-    family: "feature_cross"
+# experiment:
+#   name: "benchmark_feature_cross"
+#   seed: 42
+#   device: "auto"
+#   output_dir: "./outputs"
+#
+# datasets:
+#   - "criteo_kaggle"
+#
+# models:
+#   - name: "DCN"
+#     family: "feature_cross"
