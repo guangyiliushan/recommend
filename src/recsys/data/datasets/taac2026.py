@@ -30,6 +30,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 import torch
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 
 from recsys.core.base_dataset import BaseDataset
@@ -165,7 +166,8 @@ class _TabularSplit(Dataset[Dict[str, torch.Tensor]]):
             "user_feats": torch.as_tensor(user_feats, dtype=torch.float32),
             "item_feats": torch.as_tensor(item_feats, dtype=torch.float32),
             "domain_seqs": (
-                torch.stack(domain_seqs, dim=0)
+                # torch.stack(domain_seqs, dim=0)
+                pad_sequence(domain_seqs, batch_first=True, padding_value=0)
                 if domain_seqs
                 else torch.empty(0, dtype=torch.long)
             ),

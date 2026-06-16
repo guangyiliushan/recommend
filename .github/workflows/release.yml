@@ -1,16 +1,18 @@
 ---
-name: Release — code
+name: Release
 
 on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
   RELEASE_PYTHON_VERSION: "3.13"
+  RELEASE_PYTEST_ARGS: "-v"
 
 concurrency:
   group: release-${{ github.ref }}
@@ -20,12 +22,13 @@ jobs:
   build-and-publish:
     name: 构建与发布
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
 
     steps:
       - name: 检出仓库
         uses: actions/checkout@v5
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: 设置 Python
@@ -35,6 +38,36 @@ jobs:
 
       - name: 设置 uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+            zensical.toml
+
+      - name: 同步发布环境
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            uv sync --locked --extra dev --python "${{ env.RELEASE_PYTHON_VERSION }}" && break
+            if [[ "$attempt" -eq 3 ]]; then
+              echo "uv sync failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            echo "uv sync failed, retrying in 5s (attempt ${attempt}/3)" >&2
+            sleep 5
+          done
+
+      - name: 运行 Ruff
+        run: uv run --python "${{ env.RELEASE_PYTHON_VERSION }}" ruff check .
+
+      - name: 运行发布前测试
+        run: >
+          uv run --python "${{ env.RELEASE_PYTHON_VERSION }}" pytest
+          ${{ env.RELEASE_PYTEST_ARGS }}
+
+      - name: 校验文档站点可构建
+        run: uv run --python "${{ env.RELEASE_PYTHON_VERSION }}" zensical build --strict --clean
 
       - name: 构建分发包
         shell: bash
@@ -48,6 +81,11 @@ jobs:
             echo "uv build failed, retrying in 5s (attempt ${attempt}/3)" >&2
             sleep 5
           done
+
+      - name: 校验分发包元数据
+        run: >
+          uv run --python "${{ env.RELEASE_PYTHON_VERSION }}" --with twine
+          twine check dist/*
 
       - name: 创建 GitHub Release 并上传制品
         uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090
