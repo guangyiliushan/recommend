@@ -1,47 +1,19 @@
 ---
 title: Persistence Contracts
-description: 关键持久化契约、存储格式、生命周期、一致性要求与版本规则
+description: 当前单实验与批量 Benchmark 的真实 artifact 协议
 ---
 
 # Persistence Contracts
 
 ## 目标
 
-RecBench 的运行结果、配置快照和聚合产物必须具备稳定持久化契约，否则会出现：
+RecBench 当前已经把配置快照、状态文件、指标结果、预测文件与 Benchmark 聚合表落成真实文件输出。
 
-- benchmark 结果不可复现
-- 失败恢复无法判断状态
-- 旧结果与新代码无法兼容
-- 自动化聚合和报告生成缺少统一输入
+因此本页重点不是继续讨论“将来应该保存什么”，而是明确当前代码已经保存了什么、保存到哪里、怎样被恢复与聚合逻辑消费。
 
-这份文档定义项目级关键持久化对象的存储格式、字段语义、生命周期、一致性约束和版本演进规则。
+## 输出根目录
 
-## 持久化对象范围
-
-当前项目最关键的持久化对象包括：
-
-- 配置快照
-- 运行状态文件
-- 单实验指标结果
-- 单实验预测结果
-- checkpoint
-- benchmark 汇总结果
-- leaderboard
-- 失败记录
-- 日志与可视化产物
-
-## 总体原则
-
-所有持久化对象都应遵守：
-
-- 结构化优先于截图或纯文本
-- 原始结果优先于只保留汇总结果
-- 文件名稳定且可预测
-- 能支持自动扫描、恢复与版本升级
-
-## 标准输出根目录
-
-推荐长期采用如下目录分层：
+当前输出目录分为两层：
 
 ```text
 outputs/
@@ -51,422 +23,279 @@ outputs/
     `-- {benchmark_name}/
 ```
 
-### 语义说明
+- `experiments/`：单实验原子结果
+- `benchmarks/`：多实验聚合结果
 
-- `experiments/`：单次实验的原子结果目录
-- `benchmarks/`：多实验聚合视图目录
+## 单实验产物
 
-## 契约 1：`config.yaml`
+## `config.yaml`
 
-### 作用
+### 当前作用
 
-- 保存一次实验最终解析后的完整配置快照
-- 作为实验复现的真相源
+- 保存单实验配置快照
+- 作为 run 的复现依据
+- 用于恢复逻辑中的配置一致性判断
 
-### 推荐路径
+### 当前路径
 
 - `outputs/experiments/{run_id}/config.yaml`
 
-### 推荐格式
+### 当前要求
 
-- YAML
+- 与 run 目录唯一对应
+- 在运行开始阶段写出
+- 应能被恢复逻辑重新解析
 
-### 最低要求
+## `status.json`
 
-- 必须是 fully resolved config
-- 必须包含 dataset、model、training、evaluation、runtime、experiment 信息
-- 不应只保存 CLI 覆盖片段
+### 当前作用
 
-### 生命周期
+- 记录当前 run 的状态
+- 支撑恢复与幂等跳过
+- 承接结构化错误信息
 
-- 创建时机：实验开始前
-- 更新策略：只写一次，不在运行中途重写
-- 保留策略：与 run 同生命周期
-
-### 一致性要求
-
-- `config.yaml` 与当前 run 的目录、状态和指标必须一一对应
-- benchmark 聚合时若复用历史 run，必须能根据该文件判断配置一致性
-
-## 契约 2：`status.json`
-
-### 作用
-
-- 记录单实验当前状态
-- 支撑失败恢复和幂等执行
-
-### 推荐路径
+### 当前路径
 
 - `outputs/experiments/{run_id}/status.json`
 
-### 推荐格式
+### 当前状态值
 
-- JSON
+- `pending`
+- `running`
+- `succeeded`
+- `failed`
+- `skipped`
 
-### 推荐结构
+### 当前使用场景
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `run_id` | `string` | 是 | 唯一实验标识 |
-| `status` | `string` | 是 | `pending` / `running` / `succeeded` / `failed` / `skipped` |
-| `started_at` | `string` | 否 | ISO 8601 时间 |
-| `finished_at` | `string` | 否 | ISO 8601 时间 |
-| `dataset` | `string` | 是 | 数据集名 |
-| `model` | `string` | 是 | 模型名 |
-| `seed` | `integer` | 否 | 随机种子 |
-| `primary_metric` | `string \| null` | 否 | 主指标名 |
-| `primary_metric_value` | `number \| null` | 否 | 主指标值 |
-| `error` | `object \| null` | 否 | 结构化错误信息 |
-| `resume_supported` | `boolean` | 否 | 是否支持恢复 |
+- Benchmark 在恢复时会优先检查它
+- 成功 run 的跳过判断依赖它与 `metrics.json`
 
-### 生命周期
+## `metrics.json`
 
-- 创建时机：实验启动时
-- 更新时机：阶段切换、成功结束、失败退出时
-- 保留策略：与 run 同生命周期
+### 当前作用
 
-### 一致性要求
+- 保存结构化评估结果
+- 提供 `summary_metrics` 给 Benchmark 聚合
+- 提供 `task_metrics`、`group_metrics` 与 `curve_artifacts` 给下游分析
 
-- `status = succeeded` 时，应存在 `metrics.json`
-- `status = failed` 时，应存在 `error`
-- 不允许 `finished_at` 早于 `started_at`
-
-## 契约 3：`metrics.json`
-
-### 作用
-
-- 保存单实验结构化评估结果
-
-### 推荐路径
+### 当前路径
 
 - `outputs/experiments/{run_id}/metrics.json`
 
-### 推荐格式
+### 当前主要字段
 
-- JSON
+- `summary_metrics`
+- `task_metrics`
+- `group_metrics`
+- `curve_artifacts`
+- `metadata`
 
-### 推荐结构
+## `predictions.parquet`
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `summary_metrics` | `object` | 主指标与摘要指标 |
-| `task_metrics` | `object` | 多任务或分任务指标 |
-| `group_metrics` | `object` | 分组诊断结果 |
-| `curve_artifacts` | `object` | 曲线文件或曲线数据索引 |
-| `metadata` | `object` | 任务类型、阈值、K 值、样本规模等 |
+### 当前作用
 
-### 生命周期
+- 保存预测明细
+- 支撑离线复盘与误差分析
 
-- 创建时机：评估结束后
-- 更新策略：原则上一次写入；若允许增量写入，必须保证原子性
-
-### 一致性要求
-
-- `summary_metrics` 中应包含 benchmark 使用的主指标
-- `metadata.task_type` 应与配置与模型契约一致
-
-## 契约 4：`predictions.parquet`
-
-### 作用
-
-- 保存单实验预测明细
-- 支撑复盘、误差分析、统计检验与二次聚合
-
-### 推荐路径
+### 当前路径
 
 - `outputs/experiments/{run_id}/predictions.parquet`
 
-### 推荐格式
+### 当前注意事项
 
-- Parquet
+- 并非所有任务未来都必须完全同列，但字段语义应围绕 `PredictionBundle` 保持稳定
+- ranking 场景应保留分组语义
 
-### 推荐字段
+## `curves/`
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `sample_id` | `string \| int` | 样本标识 |
-| `user_id` | `string \| int \| null` | 用户标识 |
-| `item_id` | `string \| int \| null` | 物品标识 |
-| `group_id` | `string \| int \| null` | ranking 分组标识 |
-| `task_name` | `string \| null` | 多任务任务头 |
-| `y_true` | `number \| bool` | 真实标签 |
-| `y_score` | `number` | 连续预测分数 |
-| `y_pred` | `number \| bool \| null` | 离散预测 |
-| `split` | `string` | 预测来源 split |
+### 当前作用
 
-### 生命周期
+- 保存结构化曲线数据
 
-- 创建时机：预测结果生成后
-- 保留策略：可选，但 benchmark 级统计和误差分析强烈建议保留
-
-### 一致性要求
-
-- pointwise 可无 `group_id`
-- ranking 必须有 `group_id`
-- multitask 应通过 `task_name` 或多文件拆分明确任务头
-
-## 契约 5：`checkpoints/`
-
-### 作用
-
-- 保存模型训练中间状态或最终状态
-
-### 推荐路径
-
-- `outputs/experiments/{run_id}/checkpoints/`
-
-### 推荐内容
-
-- `best.ckpt`
-- `last.ckpt`
-- 可选的 `epoch={n}.ckpt`
-
-### 生命周期
-
-- 创建时机：训练过程和训练结束时
-- 清理策略：根据保留策略决定是否只保留 best/last
-
-### 一致性要求
-
-- checkpoint 必须对应当前 `config.yaml`
-- checkpoint 元信息中应包含模型名、epoch、global step
-
-## 契约 6：`logs/`
-
-### 作用
-
-- 保存运行日志、训练日志、错误日志
-
-### 推荐路径
-
-- `outputs/experiments/{run_id}/logs/`
-
-### 推荐内容
-
-- `run.log`
-- `stderr.log`
-- `trainer.log`
-
-### 一致性要求
-
-- 关键错误应能在日志中定位到阶段
-- `status.json` 中的失败摘要应能对应日志内容
-
-## 契约 7：`curves/`
-
-### 作用
-
-- 保存 ROC、PR、Top-K、训练曲线等图或数据文件
-
-### 推荐路径
+### 当前路径
 
 - `outputs/experiments/{run_id}/curves/`
 
-### 推荐内容
+### 当前典型内容
 
-- `roc_curve.json`
-- `pr_curve.json`
-- `ndcg_at_k.json`
-- `training_curve.csv`
+- ROC 曲线 JSON
+- PR 曲线 JSON
+- Top-K 指标曲线 JSON
+- threshold sweep JSON
 
-推荐优先存“原始曲线数据”，图片可以作为附加产物。
+当前实现优先保存“原始结构化曲线数据”，图片并不是主产物。
 
-## 契约 8：`manifest.json`
+## `logs/`
 
-### 作用
+### 当前作用
 
-- 作为 benchmark 级索引文件
-- 记录整批实验矩阵和参与 run
+- 保存单实验日志
+- 至少用于失败排查
 
-### 推荐路径
+### 当前路径
+
+- `outputs/experiments/{run_id}/logs/`
+
+### 当前已明确存在的文件
+
+- `stderr.log`
+
+注意：文档不应把 `run.log` 或 `trainer.log` 写成当前单实验主干的既有产物，除非代码真正写出了这些文件。
+
+## `checkpoints/`
+
+### 当前状态
+
+训练基础设施支持 checkpoint callback，但由于训练型 experiment 路径尚未接通，`checkpoints/` 目前不应被写成单实验主路径上的既有常规产物。
+
+文档中更准确的表达是：
+
+- 训练层已具备 checkpoint 机制
+- 当训练型路径接通后，`checkpoints/` 会成为重要产物目录
+
+## 批量 Benchmark 产物
+
+## `manifest.json`
+
+### 当前作用
+
+- 记录一次 Benchmark 的矩阵范围与产物索引
+
+### 当前路径
 
 - `outputs/benchmarks/{benchmark_name}/manifest.json`
 
-### 推荐结构
+### 当前典型字段
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `benchmark_name` | `string` | benchmark 名称 |
-| `created_at` | `string` | 创建时间 |
-| `runs` | `array` | run_id 列表 |
-| `models` | `array` | 模型集合 |
-| `datasets` | `array` | 数据集集合 |
-| `seeds` | `array` | seed 集合 |
-| `summary_path` | `string` | 汇总文件路径 |
-| `failures_path` | `string` | 失败列表路径 |
+- `benchmark_name`
+- `created_at`
+- `runs`
+- `models`
+- `datasets`
+- `seeds`
+- `total`
+- `succeeded`
+- `failed`
+- `summary_path`
+- `failures_path`
+- `leaderboard_path`
+- `report_path`
 
-### 一致性要求
+## `summary.csv`
 
-- `runs` 中每个 run 必须能在 `experiments/` 下找到
-- manifest 中的配置范围必须和 summary/leaderboard 一致
+### 当前作用
 
-## 契约 9：`summary.csv`
+- 保存逐 run 的展平摘要
 
-### 作用
-
-- 保存 benchmark 中所有 run 的展平摘要
-
-### 推荐路径
+### 当前路径
 
 - `outputs/benchmarks/{benchmark_name}/summary.csv`
 
-### 推荐列
+### 当前用途
 
-- `run_id`
-- `dataset`
-- `model`
-- `seed`
-- `status`
-- `primary_metric`
-- 关键指标列
+- 查看每次实验的状态与摘要指标
+- 作为后续聚合或导出分析表的基础输入
 
-### 一致性要求
+## `leaderboard.csv`
 
-- 一行对应一个 run
-- `run_id` 应唯一
-- 失败 run 可以保留，但需标明 `status`
+### 当前作用
 
-## 契约 10：`leaderboard.csv`
+- 基于成功 run 聚合后形成排序视图
 
-### 作用
-
-- 保存基于主指标排序后的聚合视图
-
-### 推荐路径
+### 当前路径
 
 - `outputs/benchmarks/{benchmark_name}/leaderboard.csv`
 
-### 推荐列
+### 当前用途
 
-- `model`
-- `dataset`
-- `primary_metric`
-- `mean`
-- `std`
-- `rank`
-- `num_runs`
+- 查看同一模型在同一数据集上的均值表现
+- 结合 `std` 和 `num_runs` 做稳定性比较
 
-### 一致性要求
+## `failures.csv`
 
-- 聚合方法必须在同版本文档中明确
-- 不同任务类型不要混在同一排行榜中直接比较
+### 当前作用
 
-## 契约 11：`failures.csv`
+- 记录失败 run 的结构化信息
 
-### 作用
-
-- 保存 benchmark 中所有失败 run 的结构化信息
-
-### 推荐路径
+### 当前路径
 
 - `outputs/benchmarks/{benchmark_name}/failures.csv`
 
-### 推荐列
+### 当前用途
 
-- `run_id`
-- `dataset`
-- `model`
-- `seed`
-- `phase`
-- `error_code`
-- `error_message`
+- 快速定位失败组合、阶段和错误信息
 
-### 一致性要求
+## `trend.csv`
 
-- 每一条失败记录应能映射到对应 run 目录
-- `error_code` 应与项目统一错误模型保持一致
+### 当前作用
 
-## 数据模型版本化
+- 保存逐 run 的趋势信息
 
-所有关键持久化对象建议包含 schema 版本信息。
+### 当前路径
 
-### 推荐字段
+- `outputs/benchmarks/{benchmark_name}/trend.csv`
 
-- `schema_version`
+### 当前用途
 
-### 推荐规则
+- 分析多 seed 波动和主指标趋势
 
-- 新增可选字段：小版本兼容升级
-- 删除或重命名字段：大版本升级
-- 改变核心语义：必须升级版本并提供迁移说明
+## `stability.csv`
 
-### 推荐命名方式
+### 当前作用
 
-- `v1`
-- `v1.1`
+- 保存聚合稳定性统计
 
-或语义化版本：
+### 当前路径
 
-- `1.0.0`
+- `outputs/benchmarks/{benchmark_name}/stability.csv`
 
-## 生命周期管理规则
+### 当前用途
 
-推荐按以下层级定义生命周期：
+- 查看均值、标准差、变异系数等稳定性指标
 
-### 短生命周期
+## `report.html`
 
-- 中间训练日志
-- 临时缓存
+### 当前作用
 
-### 中生命周期
+- 提供人工浏览友好的聚合摘要页
 
-- 单实验 checkpoint
-- 单实验预测文件
+### 当前路径
 
-### 长生命周期
+- `outputs/benchmarks/{benchmark_name}/report.html`
 
-- 配置快照
-- `metrics.json`
-- `summary.csv`
-- `leaderboard.csv`
-- `manifest.json`
+## 当前恢复与一致性逻辑
 
-长期留存对象应优先确保格式稳定与可迁移。
+当前恢复逻辑主要依赖下面几项一致性检查：
 
-## 一致性校验规则
+1. `status.json` 是否存在
+2. `metrics.json` 是否存在
+3. `status.json` 是否为 `succeeded`
+4. `config.yaml` 中的配置 hash 是否与当前请求匹配
 
-文档与实现应至少支持以下校验：
+这意味着 artifact 契约当前已经直接参与运行控制，不只是“供人工查看”。
+
+## 当前推荐的一致性检查
+
+更新文档或调试产物时，建议至少检查：
 
 1. `status.json` 与 `metrics.json` 是否对应
-2. `manifest.json` 与 `summary.csv` 的 run 数是否一致
+2. `manifest.json` 中的 run 数是否与 `summary.csv` 一致
 3. `leaderboard.csv` 是否只基于成功 run 聚合
-4. `predictions.parquet` 的列是否满足任务类型要求
-5. `config.yaml` 是否存在且可解析
+4. `config.yaml` 是否可重新解析
+5. `predictions.parquet` 与任务类型语义是否匹配
 
-## 演进规则
+## 当前需要避免的误写
 
-当持久化契约需要调整时，应遵循以下顺序：
+文档不应把下面这些内容写成“已经稳定存在”：
 
-1. 先在文档中声明变更
-2. 增加新字段或新版本支持
-3. 保留旧格式兼容窗口
-4. 提供迁移策略
-5. 最后再移除旧格式
+- 单实验默认会写 `checkpoints/`
+- 单实验默认会写 `run.log`
+- 所有任务都已拥有统一的最终预测明细列集合
+- 所有 artifact 都已版本化并完全支持迁移
 
-不要先改代码再让文档“事后补票”。
+这些方向是合理的，但当前仓库实现还没有全部走到那一步。
 
-## 与其他文档的关系
+## 当前最重要的结论
 
-这份契约文档与以下页面配合使用：
-
-- [Pipeline Guide](pipeline.md)：定义单实验如何产出 artifact
-- [Benchmarking Guide](benchmarking.md)：定义 benchmark 如何聚合这些 artifact
-- [API Contracts](api-contracts.md)：定义运行时接口与错误语义
-
-## 需要避免的反模式
-
-请尽量避免：
-
-- 只保存图片，不保存结构化原始结果
-- 同一文件名在不同版本代表不同语义
-- 没有状态文件就尝试做恢复
-- 不保留配置快照
-- 结果列名随不同模型任意变化
-
-## 一句话总结
-
-对 RecBench 来说，最佳实践不是“先把结果写出来”，而是：
-
-- 先定义哪些结果必须被稳定持久化
-- 再定义它们的格式、状态、一致性和演进规则
-- 用结构化契约让实验、benchmark 与恢复流程真正可落地
+RecBench 已经拥有一套真实可用的 artifact 主干：单实验写配置、状态、指标、预测与曲线，批量 Benchmark 写 manifest、summary、leaderboard、failures、trend、stability 和 HTML 报告。文档应以这套真实产物为准，而不是继续用泛化的“建议保存”口径替代当前实现。

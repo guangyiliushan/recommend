@@ -1,130 +1,182 @@
 # RecBench
 
-RecBench is a recommendation-system benchmark project that aims to unify classical collaborative filtering, deep CTR/CVR models, sequence recommendation, feature crossing, multi-task PCVR modeling, and emerging generative recommendation methods under one reproducible engineering workflow.
+RecBench 是一个推荐系统 Benchmark 与工程框架项目，目标是在统一配置、数据适配、模型契约、训练基础设施、评估协议和 artifact 规范下，逐步构建可复现、可比较、可维护的推荐实验平台。
 
-The repository currently contains:
+## 当前状态
 
-- a clear package layout under `src/recsys`
-- dataset adapters for TAAC 2025 and TAAC 2026 samples
-- model family placeholders for 50+ algorithms
-- benchmark-oriented configuration structure under `configs/`
-- CI, release, and documentation deployment workflows
+仓库当前已经完成的核心能力包括：
 
-The repository does not yet provide a fully completed end-to-end benchmark runtime. Several core modules are still scaffolded and are being standardized before wider model implementation.
+- `src/recsys/core`：注册表、基础模型契约、`PredictionBundle`
+- `src/recsys/utils`：结构化配置、设备探测、日志、可复现性、profiling
+- `src/recsys/training`：Lightning 训练封装、callbacks、loss、optimizer、scheduler、分布式策略解析
+- `src/recsys/evaluation`：pointwise、ranking、multitask 评估与曲线导出
+- `src/recsys/pipeline`：单实验主干、批量 Benchmark 调度、聚合报告
+- `src/recsys/models/classical/item_based_cf.py`：当前最成熟的经典基线 `itemcf`
+- `docs/`：与当前仓库实现对齐的技术文档
 
-## Why This Project
+当前仍需明确的限制包括：
 
-- Unify multiple recommendation paradigms under one experiment contract
-- Compare models with consistent configuration, training, and evaluation logic
-- Provide a maintainable codebase instead of a collection of disconnected scripts
-- Make benchmark runs reproducible in local development and CI
+- 可训练模型尚未接通 `run_experiment()` 的训练型主路径
+- 当前真正可用于最小闭环的模型主要是 `itemcf`
+- 多数模型家族文件仍是目录预留或占位实现
+- `scripts/` 下 CLI 入口仍是骨架，不应视为现成可执行工具
 
-## Current Status
+换句话说，RecBench 目前已经具备“共享运行时主干 + 最小可运行基线”的基础，但还不是“全模型全部完工”的成品 Benchmark 套件。
 
-- Package root: `src/recsys`
-- Dependency management direction: `uv` in CI, with documentation now aligned to that workflow
-- Implemented data adapters: `taac2025_*`, `taac2026_*`
-- Major model families present as skeletons
-- Core orchestration modules such as trainer, evaluator, experiment, and benchmark runner are still under construction
+## 为什么做这个项目
 
-If you plan to contribute code, read [CONTRIBUTING.md](file:///d:/Project/Project/recommend/CONTRIBUTING.md) first and then the documentation in `docs/`.
+- 用统一契约承接经典协同过滤、深度 CTR/CVR、序列推荐、多任务与后续扩展方向
+- 用一致的配置、评估和 artifact 协议降低实验漂移
+- 用工程化主干替代一组彼此割裂的脚本
+- 让本地开发与 CI 中的实验流程更可复现
 
-## Project Layout
+## 当前最小闭环
+
+当前代码仓库中，最清晰的可运行路径是：
+
+1. 使用已注册的数据集适配器加载数据
+2. 通过模型注册表实例化 `itemcf`
+3. 走 `run_experiment()` 的非训练式路径执行 `fit/predict`
+4. 通过 `evaluate()` 生成 ranking 指标
+5. 落盘 `config.yaml`、`status.json`、`metrics.json`、`predictions.parquet` 与 `curves/`
+6. 通过 `run_benchmark()` 与 `Reporter` 聚合多次实验结果
+
+## 项目结构
 
 ```text
 .
-|-- configs/                  # Hydra-style configuration entrypoints
-|-- docs/                     # Zensical documentation source
-|-- scripts/                  # User-facing CLI scripts
+|-- configs/                  # 配置与实验矩阵
+|-- docs/                     # 文档站源码
+|-- scripts/                  # 计划中的 CLI 入口骨架
 |-- src/recsys/
-|   |-- core/                 # Registries and base contracts
-|   |-- data/                 # Dataset adapters and preprocessing
-|   |-- evaluation/           # Metrics, evaluator, visualization
-|   |-- models/               # Model families and individual algorithms
-|   |-- pipeline/             # Experiment and benchmark orchestration
-|   |-- training/             # Trainer abstractions, callbacks, losses
-|   `-- utils/                # Config, logging, device, reproducibility
-|-- tests/                    # Contract and regression tests
-`-- .github/workflows/        # CI, docs deploy, release automation
+|   |-- core/                 # 注册表、基础契约、PredictionBundle
+|   |-- data/                 # Dataset adapter 与数据注册
+|   |-- evaluation/           # 指标、evaluator、ranking、visualization
+|   |-- models/               # 模型家族与注册入口
+|   |-- pipeline/             # 单实验、Benchmark、Reporter
+|   |-- training/             # Trainer、callbacks、loss、optimizer、scheduler
+|   `-- utils/                # 配置、日志、设备、可复现、profiling
+|-- tests/                    # 测试目录
+`-- .github/workflows/        # CI、文档与发布相关工作流
 ```
 
-## Quick Start
+## 快速开始
 
-### 1. Create or sync the environment
+### 1. 同步环境
 
-This repository should be operated with `uv` for consistency with GitHub Actions.
+仓库统一使用 `uv` 管理 Python 环境与依赖：
 
 ```bash
 uv sync --extra dev
 ```
 
-### 2. Run tests
-
-```bash
-uv run pytest -v
-```
-
-### 3. Run lint checks
+### 2. 运行静态检查
 
 ```bash
 uv run ruff check .
 ```
 
-### 4. Build the documentation site locally
+### 3. 运行测试
+
+```bash
+uv run pytest -v
+```
+
+说明：当前仓库的 `tests/` 可能仍为空或覆盖有限，因此测试结果更多反映“已写测试的通过情况”，并不等于全量功能验证。
+
+### 4. 构建文档站
 
 ```bash
 uv run zensical build --strict --clean
 ```
 
-## Documentation
+## Python API 示例
 
-- [Documentation Home](file:///d:/Project/Project/recommend/docs/index.md)
-- [Getting Started](file:///d:/Project/Project/recommend/docs/getting-started.md)
-- [Concepts: Architecture](file:///d:/Project/Project/recommend/docs/concepts/architecture.md)
-- [Concepts: Configuration](file:///d:/Project/Project/recommend/docs/concepts/configuration.md)
-- [Project: Structure](file:///d:/Project/Project/recommend/docs/project/structure.md)
-- [Project: API Contracts](file:///d:/Project/Project/recommend/docs/project/api-contracts.md)
-- [Project: Artifacts](file:///d:/Project/Project/recommend/docs/project/artifacts.md)
-- [Project: Dataset Guide](file:///d:/Project/Project/recommend/docs/project/datasets.md)
-- [Project: Evaluation Guide](file:///d:/Project/Project/recommend/docs/project/evaluation.md)
-- [Project: Pipeline Guide](file:///d:/Project/Project/recommend/docs/project/pipeline.md)
-- [Project: Benchmarking Guide](file:///d:/Project/Project/recommend/docs/project/benchmarking.md)
-- [Project: Development Guide](file:///d:/Project/Project/recommend/docs/project/development.md)
-- [Project: Model Integration](file:///d:/Project/Project/recommend/docs/project/models.md)
-- [Experiments](file:///d:/Project/Project/recommend/docs/experiments/index.md)
-- [Guides](file:///d:/Project/Project/recommend/docs/guides/index.md)
-- [Papers](file:///d:/Project/Project/recommend/docs/papers/index.md)
-- [Operations: Overview](file:///d:/Project/Project/recommend/docs/operations/overview.md)
-- [Operations: Maintenance](file:///d:/Project/Project/recommend/docs/operations/maintenance.md)
+### 模型发现
 
-The documentation site is built from `docs/` and deployed through [deploy-docs.yml](file:///d:/Project/Project/recommend/.github/workflows/deploy-docs.yml).
+```python
+from recsys import auto_discover_models, get_model, list_models
 
-## Recommended Roadmap
+auto_discover_models()
+print(list_models())
 
-The next stable milestone is not "implement all 50+ models", but:
+ItemCF = get_model("itemcf")
+model = ItemCF(similarity="cosine", top_k_neighbors=50, recommend_k=10)
+```
 
-1. standardize config, registry, dataset, and model contracts
-2. complete the minimal single-experiment runtime
-3. support one non-neural baseline and one trainable neural baseline end-to-end
-4. stabilize evaluation outputs and artifact layout
-5. expand model families with contract tests
+### 单实验运行
 
-## Development Principles
+```python
+from recsys.pipeline.experiment import ExperimentConfig, run_experiment
 
-- Prefer `uv` over `pip` or `npm`-style workflows for Python environment operations
-- Keep configuration and code contracts aligned
-- Treat the current repository state honestly in docs and READMEs
-- Add new models only after the shared runtime contract is stable
-- Favor focused tests around contracts and regression risk
+cfg = ExperimentConfig(
+    experiment_name="demo_itemcf",
+    dataset_name="taac2026_data_sample",
+    model_name="itemcf",
+    seed=42,
+    output_dir="./outputs/experiments",
+    data_config={"root_dir": "./data"},
+    evaluation_config={
+        "primary_metric": "ndcg@10",
+        "ranking_k": [10],
+        "generate_curves": False,
+    },
+)
 
-## Contributing
+result = run_experiment(cfg)
+print(result.status)
+print(result.summary_metrics)
+print(result.artifact_paths)
+```
 
-Issues and pull requests are welcome once they align with the current architecture direction. Before making large changes:
+### 批量 Benchmark
 
-1. read [CONTRIBUTING.md](file:///d:/Project/Project/recommend/CONTRIBUTING.md)
-2. check the docs in `docs/`
-3. avoid adding new model implementations on top of unstable base contracts
+```python
+from recsys.pipeline.benchmark import BenchmarkConfig, ResumeMode, run_benchmark
+
+bench_cfg = BenchmarkConfig(
+    benchmark_name="demo_benchmark",
+    models=["itemcf"],
+    datasets=["taac2026_data_sample"],
+    seeds=[42, 43],
+    resume_mode=ResumeMode.SUCCESSFUL_SKIP,
+    max_concurrent_runs=1,
+    output_root="./outputs",
+    experiment_output_dir="./outputs/experiments",
+)
+
+bench_result = run_benchmark(bench_cfg)
+print(bench_result.status)
+print(bench_result.summary_path)
+print(bench_result.report_path)
+```
+
+## 文档入口
+
+- [Documentation Home](docs/index.md)
+- [Getting Started](docs/getting-started.md)
+- [Architecture](docs/concepts/architecture.md)
+- [Configuration Guide](docs/concepts/configuration.md)
+- [Public API](docs/project/api-contracts.md)
+- [Pipeline Guide](docs/project/pipeline.md)
+- [Evaluation Guide](docs/project/evaluation.md)
+- [Benchmarking Guide](docs/project/benchmarking.md)
+- [Persistence Contracts](docs/project/artifacts.md)
+- [Model Integration Guide](docs/project/models.md)
+- [Development Guide](docs/project/development.md)
+
+## 开发原则
+
+- 优先稳定共享契约，再扩展模型数量
+- 文档必须诚实反映仓库真实状态
+- Python 依赖与命令统一使用 `uv`
+- 新功能变更应同步更新文档与必要测试
+- 在共享运行时尚未稳定前，避免大批量引入模型实现
+
+## 贡献
+
+在提交较大改动前，请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 和 `docs/` 中的相关页面。
 
 ## License
 
-This project is published under the MIT License as declared in `pyproject.toml`.
+本项目使用 MIT License，详见 `pyproject.toml`。

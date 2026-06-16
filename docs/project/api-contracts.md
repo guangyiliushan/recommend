@@ -1,615 +1,384 @@
 ---
 title: Public API
-description: RecBench 公共 Python API 与 CLI 契约、参数、返回格式、错误模型和示例
+description: 当前真实存在的公共 Python API、返回结构与边界说明
 ---
 
 # Public API
 
 ## 目标
 
-当前仓库尚未提供 HTTP 服务型 API，因此这里定义的“公共 API”是：
+RecBench 当前没有 HTTP 服务型接口，因此“公共 API”主要指：
 
-- 稳定的 Python 编程接口
-- 面向用户的 CLI 入口
-- 后续可演进为服务接口的统一契约
+- 顶层 Python 包导出
+- 注册表与基础契约
+- 运行时主干 `run_experiment()` / `run_benchmark()`
+- evaluator 与 training 的公共工厂接口
 
-这份文档的目标是明确哪些接口可以被视为项目公共入口、它们的参数与返回、异常语义和调用方式。
+`scripts/` 下的 CLI 入口目前仍是骨架，不属于稳定公共 API。
 
-## API 分层
+## 顶层包导出
 
-当前公共 API 建议分为三层：
+`src/recsys/__init__.py` 当前对外导出：
 
-- Core API：注册表与基础抽象
-- Runtime API：数据、评估、实验、benchmark 主干
-- CLI API：`scripts/` 下的用户入口
+- 版本号 `__version__`
+- 四个注册表：`MODEL_REGISTRY`、`DATASET_REGISTRY`、`METRIC_REGISTRY`、`LOSS_REGISTRY`
+- 模型契约对象：`BaseRecommender`、`NeuralRecommender`、`Batch`、`ModelOutput`、`Capability`
+- 预测产物：`PredictionBundle`
+- 模型发现入口：`auto_discover_models()`、`get_model()`、`get_model_metadata()`、`list_models()`、`list_models_by_family()`、`list_models_by_task_type()`
 
-## 适用范围说明
+示例：
 
-当前仓库中，真正已有源码骨架支撑的公共 API 主要包括：
+```python
+from recsys import auto_discover_models, get_model, list_models
 
-- `Registry`
-- `BaseDataset`
-- dataset registration side effects
-- 计划中的 `run_experiment()`
-- 计划中的 `run_benchmark()`
-- 计划中的 evaluator pipeline
+auto_discover_models()
+print(list_models())
 
-其中部分接口已经存在代码定义，部分接口仍是仓库明确承诺但尚未完全实现的目标契约。文档中会明确区分两者。
+ItemCF = get_model("itemcf")
+model = ItemCF(similarity="cosine")
+```
 
-## 统一错误模型
+## 错误语义
 
-由于当前项目主要是 Python API，而不是 HTTP API，错误信息以异常和状态文件为主。
+当前项目的错误模型以 Python 异常和结构化错误对象为主，而不是 HTTP 状态码。
 
-推荐统一使用如下错误模型语义：
+### 当前已经存在的错误类型
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `code` | `str` | 稳定错误码 |
-| `phase` | `str` | 发生阶段，如 `config` / `data` / `training` |
-| `message` | `str` | 人类可读错误说明 |
-| `details` | `dict` | 附加上下文 |
-| `hint` | `str \| null` | 推荐修复建议 |
+- `ConfigError`
+- `DeviceError`
+- `LoggingError`
+- `ReproducibilityError`
+- `ProfilingError`
+- `ModelContractError`
+- `ExperimentError`
 
-### 推荐错误码
+### 当前结构化错误对象
 
-| 错误码 | 说明 |
-|---|---|
-| `CONFIG_VALIDATION_ERROR` | 配置校验失败 |
-| `REGISTRY_ITEM_NOT_FOUND` | 注册表项不存在 |
-| `REGISTRY_DUPLICATE_ITEM` | 注册重复 |
-| `DATASET_NOT_LOADED` | 数据集尚未完成 `load()` |
-| `DATASET_SPLIT_NOT_FOUND` | 请求的 split 不存在 |
-| `MODEL_CONTRACT_ERROR` | 模型契约不满足要求 |
-| `EVALUATION_CONTRACT_ERROR` | 评估输入不符合约定 |
-| `ARTIFACT_WRITE_ERROR` | 结果或制品写入失败 |
-| `BENCHMARK_RESUME_ERROR` | benchmark 恢复状态异常 |
+`run_experiment()` 和 `run_benchmark()` 使用结构化错误信息时，重点字段包括：
 
-当前代码里尚未统一实现这些错误码，但推荐后续逐步把异常和状态文件收敛到这套语义。
+- `code`
+- `phase`
+- `message`
+- `details`
 
-## Core API
+文档不应假设所有模块都已经统一成完全一致的错误码体系，但可以把上述字段视为当前主干的收敛方向。
+
+## Registry API
 
 ## `Registry`
 
-源码位置：
+`src/recsys/core/registry.py` 提供统一注册表能力，用于模型、数据集、指标和 loss 的命名发现。
 
-- `src/recsys/core/registry.py`
+### 主要能力
 
-### 作用
-
-- 注册模型、数据集、指标和 loss
-- 提供按名称查找与按元信息筛选
-- 提供基于导入副作用的 auto-discovery
-
-### 构造函数
-
-```python
-Registry(name: str)
-```
-
-### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `str` | 是 | 注册表名称，如 `model`、`dataset` |
-
-### 返回
-
-- `Registry` 实例
-
-### 可能异常
-
-| 异常 | 推荐错误码 | 触发条件 |
-|---|---|---|
-| `KeyError` | `REGISTRY_DUPLICATE_ITEM` | 注册重复项 |
-| `KeyError` | `REGISTRY_ITEM_NOT_FOUND` | 获取不存在的项 |
-
-## `Registry.register()`
-
-```python
-register(name: str, **metadata: Any) -> Callable[[Type[T]], Type[T]]
-```
-
-### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `str` | 是 | 注册名称 |
-| `metadata` | `dict` | 否 | 元信息，如 `family`、`task_type` |
-
-### 返回
-
-- 一个装饰器，用于注册类
+- `register(name, **metadata)`
+- `get(name)`
+- `get_metadata(name)`
+- `list()`
+- `list_by(key, value)`
+- `auto_discover(package_path)`
 
 ### 示例
 
 ```python
 from recsys.core.registry import MODEL_REGISTRY
 
-@MODEL_REGISTRY.register(
-    "itemcf",
-    family="classical",
-    task_type="ranking",
-    supports_training=False,
-)
-class ItemBasedCF:
-    ...
-```
-
-## `Registry.get()`
-
-```python
-get(name: str) -> Type[Any]
-```
-
-### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `name` | `str` | 是 | 注册名称 |
-
-### 返回
-
-- 已注册的类对象
-
-### 可能异常
-
-| 异常 | 推荐错误码 | 触发条件 |
-|---|---|---|
-| `KeyError` | `REGISTRY_ITEM_NOT_FOUND` | 名称未注册 |
-
-### 示例
-
-```python
 ModelCls = MODEL_REGISTRY.get("itemcf")
-model = ModelCls(...)
+meta = MODEL_REGISTRY.get_metadata("itemcf")
+print(meta["task_type"])
 ```
 
-## `Registry.get_metadata()`
+## 模型发现 API
 
-```python
-get_metadata(name: str) -> Dict[str, Any]
-```
+`src/recsys/models/model_registry.py` 提供比直接访问 `MODEL_REGISTRY` 更面向用户的辅助函数。
 
-### 返回
+### 当前公开函数
 
-- 指定注册项的元信息字典
+- `auto_discover_models()`
+- `get_model(name)`
+- `get_model_metadata(name)`
+- `list_models()`
+- `list_models_by_family(family)`
+- `list_models_by_task_type(task_type)`
+- `list_trainable_models()`
+- `list_non_trainable_models()`
 
-## `Registry.list()`
+### 重要边界
 
-```python
-list() -> List[str]
-```
+- `auto_discover_models()` 负责导入模块并触发注册，不等于“这些模型都已经完成实现”
+- 当前文档应把“已发现的模块”与“真正可运行的模型”区分开
 
-### 返回
-
-- 当前注册表所有名称，按字典序排序
-
-## `Registry.list_by()`
-
-```python
-list_by(key: str, value: Any) -> List[str]
-```
-
-### 用途
-
-- 按元信息筛选注册项
-
-### 示例
-
-```python
-ranking_models = MODEL_REGISTRY.list_by("task_type", "ranking")
-```
-
-## `Registry.auto_discover()`
-
-```python
-auto_discover(package_path: str) -> int
-```
-
-### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `package_path` | `str` | 是 | Python 包路径，如 `recsys.models` |
-
-### 返回
-
-- 成功导入的模块数量
-
-## Dataset Runtime API
+## Dataset API
 
 ## `BaseDataset`
 
-源码位置：
+`src/recsys/core/base_dataset.py` 定义 dataset adapter 的统一生命周期。
 
-- `src/recsys/core/base_dataset.py`
+### 关键方法
 
-### 作用
+- `load()`
+- `get_split(split)`
+- `get_dataloader(split, batch_size, num_workers, shuffle, **kwargs)`
 
-- 定义统一数据集 adapter 契约
-- 封装 `load()`、`get_split()`、`get_dataloader()` 等公共行为
-
-### 构造函数
-
-```python
-BaseDataset(
-    root_dir: str = "./data",
-    split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1),
-    max_seq_len: int = 50,
-    min_seq_len: int = 2,
-    neg_sample_count: int = 4,
-    **kwargs: Any,
-)
-```
-
-### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `root_dir` | `str` | 否 | 数据根目录 |
-| `split_ratios` | `Tuple[float, float, float]` | 否 | 训练、验证、测试切分比例 |
-| `max_seq_len` | `int` | 否 | 最大序列长度 |
-| `min_seq_len` | `int` | 否 | 最小序列长度 |
-| `neg_sample_count` | `int` | 否 | 负采样数量配置 |
-| `kwargs` | `dict` | 否 | 数据集专属参数 |
-
-### 子类必须实现
-
-- `dataset_name`
-- `dataset_url`
-- `feature_cols`
-- `label_col`
-- `num_users`
-- `num_items`
-- `_load_raw()`
-- `_prepare_splits()`
-- `__len__()`
-- `__getitem__()`
-
-## `BaseDataset.load()`
-
-```python
-load() -> BaseDataset
-```
-
-### 作用
-
-- 执行完整数据加载流程
-- 内部调用 `_load_raw()` 和 `_prepare_splits()`
-
-### 返回
-
-- 当前 dataset 实例自身
-
-### 可能异常
-
-| 异常 | 推荐错误码 | 触发条件 |
-|---|---|---|
-| 任意加载异常 | `CONFIG_VALIDATION_ERROR` 或数据层细分错误 | 数据源不可用、参数异常等 |
-
-### 示例
+### 当前使用方式
 
 ```python
 from recsys.data.datasets.taac2026 import TAAC2026DataSample
 
 dataset = TAAC2026DataSample(root_dir="./data").load()
+train_split = dataset.get_split("train")
+train_loader = dataset.get_dataloader("train", batch_size=256, num_workers=4)
 ```
 
-## `BaseDataset.get_split()`
+### 当前边界
 
-```python
-get_split(split: str) -> Dataset[Any]
-```
+- 数据集需要先 `load()`，再访问 split
+- split 名统一围绕 `train / val / test / full`
+- dataset adapter 是当前真实存在的公共能力，不是占位设计
 
-### 参数
+## 配置 API
 
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `split` | `str` | 是 | `train` / `val` / `test` / `full` |
+`src/recsys/utils/config.py` 提供结构化配置加载与校验能力。
 
-### 返回
+### 主要对象
 
-- 对应 split 的 `Dataset`
+- `RecBenchConfig`
+- `ExperimentConfig`
+- `DataConfig`
+- `ModelConfig`
+- `TrainingConfig`
+- `EvaluationConfig`
+- `RuntimeConfig`
 
-### 可能异常
+### 主要函数
 
-| 异常 | 推荐错误码 | 触发条件 |
-|---|---|---|
-| `ValueError` | `DATASET_SPLIT_NOT_FOUND` | split 名非法 |
-| `RuntimeError` | `DATASET_NOT_LOADED` | 尚未调用 `load()` |
-
-## `BaseDataset.get_dataloader()`
-
-```python
-get_dataloader(
-    split: str = "train",
-    batch_size: int = 256,
-    num_workers: int = 4,
-    shuffle: bool = True,
-    **kwargs: Any,
-) -> DataLoader
-```
-
-### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `split` | `str` | 否 | 目标 split |
-| `batch_size` | `int` | 否 | batch 大小 |
-| `num_workers` | `int` | 否 | DataLoader worker 数量 |
-| `shuffle` | `bool` | 否 | 是否打乱，仅训练 split 生效 |
-| `kwargs` | `dict` | 否 | 透传给 `DataLoader` 的参数 |
-
-### 返回
-
-- `torch.utils.data.DataLoader`
+- `load_config(config_path=None, overrides=None)`
+- `validate_config(config)`
+- `get_config_snapshot(config)`
 
 ### 示例
 
 ```python
-loader = dataset.get_dataloader("train", batch_size=256, num_workers=4)
+from recsys.utils.config import load_config
+
+cfg = load_config("configs/config.yaml")
+print(cfg.model.name)
+print(cfg.runtime.device)
 ```
 
-## Dataset Registration API
+## Evaluation API
 
-源码位置：
+`src/recsys/evaluation` 当前已经提供可直接使用的公共评估接口。
 
-- `src/recsys/data/dataset_registry.py`
+### evaluator 主入口
 
-### 作用
+- `evaluate(bundle, config=None)`
+- `evaluate_pointwise(bundle, config)`
+- `evaluate_ranking(bundle, config)`
+- `evaluate_multitask(bundle, config)`
 
-- 导入各个 dataset adapter，触发注册副作用
+### metrics / ranking / visualization 导出
 
-### 当前契约
+- 分类指标函数位于 `metrics.py`
+- 排序指标函数位于 `ranking.py`
+- 曲线导出与可选绘图位于 `visualization.py`
 
-当前该模块以显式导入方式工作，不提供复杂参数接口。
+### 输入与返回
 
-推荐调用方式：
+输入统一以 `PredictionBundle` 为主。
 
-```python
-import recsys.data.dataset_registry  # noqa: F401
-from recsys.core.registry import DATASET_REGISTRY
-
-print(DATASET_REGISTRY.list())
-```
-
-## Runtime Pipeline API
-
-## `run_experiment()`
-
-源码位置：
-
-- `src/recsys/pipeline/experiment.py`
-
-### 当前状态
-
-- 仓库已明确承诺此公共入口
-- 当前尚未完成具体实现
-
-### 推荐签名
-
-```python
-run_experiment(config: RecBenchConfig) -> ExperimentResult
-```
-
-### 输入参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `config` | `RecBenchConfig` | 是 | 完整实验配置对象 |
-
-### 推荐返回格式
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `run_id` | `str` | 唯一实验标识 |
-| `status` | `str` | `succeeded` / `failed` / `skipped` |
-| `summary_metrics` | `dict` | 关键指标摘要 |
-| `artifact_paths` | `dict` | 配置、日志、指标、checkpoint 等路径 |
-| `error` | `dict \| null` | 失败时的结构化错误 |
-
-### 推荐错误码
-
-- `CONFIG_VALIDATION_ERROR`
-- `REGISTRY_ITEM_NOT_FOUND`
-- `MODEL_CONTRACT_ERROR`
-- `EVALUATION_CONTRACT_ERROR`
-- `ARTIFACT_WRITE_ERROR`
-
-### 推荐示例
-
-```python
-from recsys.pipeline.experiment import run_experiment
-from recsys.utils.config import RecBenchConfig
-
-result = run_experiment(config)
-print(result["status"])
-print(result["summary_metrics"])
-```
-
-## `run_benchmark()`
-
-源码位置：
-
-- `src/recsys/pipeline/benchmark.py`
-
-### 当前状态
-
-- 仓库已明确承诺此公共入口
-- 当前尚未完成具体实现
-
-### 推荐签名
-
-```python
-run_benchmark(config: RecBenchConfig) -> BenchmarkResult
-```
-
-### 推荐返回格式
-
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `benchmark_name` | `str` | benchmark 名称 |
-| `runs` | `list` | 各单实验结果摘要 |
-| `summary_path` | `str` | 汇总 CSV 路径 |
-| `leaderboard_path` | `str` | 排行榜路径 |
-| `failures_path` | `str` | 失败列表路径 |
-| `status` | `str` | `succeeded` / `partial_success` / `failed` |
-
-### 推荐错误语义
-
-- 单次 run 失败不应阻塞整个 benchmark
-- benchmark 级错误应仅用于配置展开失败、结果目录异常、聚合失败等问题
-
-## Evaluator API
-
-源码位置：
-
-- `src/recsys/evaluation/evaluator.py`
-
-### 当前承诺
-
-注释中已明确三类对外行为：
-
-- `collect_predictions(model, dataloader)`
-- `evaluate_model(model, dataloader, config)`
-- `generate_curves(y_true, y_score)`
-
-### 推荐输入
-
-- 统一的 `PredictionBundle`
-- 或模型 + dataloader + evaluation config 的组合
-
-### 推荐返回
+返回 `EvaluationResult`，重点字段包括：
 
 - `summary_metrics`
 - `task_metrics`
-- `curve_artifacts`
 - `group_metrics`
+- `curve_artifacts`
+- `metadata`
+- `warnings`
+- `errors`
+
+示例：
+
+```python
+from recsys.evaluation import EvaluationConfig, evaluate
+
+result = evaluate(bundle, EvaluationConfig(metrics=["ndcg@10", "mrr"]))
+print(result.summary_metrics)
+```
+
+## Training API
+
+`src/recsys/training` 当前已经具备可训练模型所需的基础设施。
+
+### 训练主入口
+
+- `LightningRecommender`
+- `TrainerFactory`
+- `create_trainer()`
+
+### 辅助工厂
+
+- `build_callbacks()`
+- `build_optimizer()`
+- `build_scheduler()`
+- `resolve_strategy()`
+- `get_loss()`
+
+### 当前边界
+
+- 训练基础设施已实现
+- 但 `run_experiment()` 尚未把训练型模型真正接入 trainer 主路径
+- 因此它们是“公共训练 API”，但还不是“已经通过单实验主干打通的完整运行路径”
+
+## Experiment Runtime API
+
+## `run_experiment()`
+
+`src/recsys/pipeline/experiment.py` 当前已经实现单实验主干。
+
+### 当前签名
+
+```python
+run_experiment(config: ExperimentConfig) -> ExperimentResult
+```
+
+这里的 `ExperimentConfig` 是 pipeline 层自己的运行配置对象，不是 `utils.config.RecBenchConfig`。
+
+### 当前已实现行为
+
+- 冻结配置并生成 `run_id`
+- 初始化输出目录和 `status.json`
+- 实例化数据集与模型
+- 按模型能力路由执行非训练式路径
+- 调用 evaluator
+- 写出 `metrics.json`、`predictions.parquet`、`curves/`
+- 返回结构化 `ExperimentResult`
+
+### 当前限制
+
+- 可训练路径尚未实现
+- 因此该入口当前最适合 `itemcf` 这类非训练模型
+
+### 返回对象重点字段
+
+- `run_id`
+- `status`
+- `summary_metrics`
+- `task_metrics`
+- `artifact_paths`
+- `error`
+- `metadata`
+- `warnings`
+
+### 示例
+
+```python
+from recsys.pipeline.experiment import ExperimentConfig, run_experiment
+
+cfg = ExperimentConfig(
+    experiment_name="demo_itemcf",
+    dataset_name="taac2026_data_sample",
+    model_name="itemcf",
+    seed=42,
+    output_dir="./outputs/experiments",
+)
+
+result = run_experiment(cfg)
+print(result.status)
+print(result.summary_metrics)
+```
+
+## Benchmark API
+
+## `run_benchmark()`
+
+`src/recsys/pipeline/benchmark.py` 当前已经实现批量调度与恢复策略。
+
+### 当前签名
+
+```python
+run_benchmark(bench_cfg: BenchmarkConfig) -> BenchmarkResult
+```
+
+### 当前已实现行为
+
+- 展开 `models × datasets × seeds`
+- 生成 `RunPlan`
+- 支持 `successful_skip / failed_only / unfinished_only / force`
+- 串行或受控并发执行实验
+- 调用 `Reporter.generate()` 聚合结果
+- 写出 `manifest.json`
+
+### 返回对象重点字段
+
+- `benchmark_name`
+- `status`
+- `runs`
+- `summary_path`
+- `leaderboard_path`
+- `failures_path`
+- `manifest_path`
+- `report_path`
 - `metadata`
 
-详细评估契约请参考 [Evaluation Guide](evaluation.md)。
+### 示例
 
-## CLI API
+```python
+from recsys.pipeline.benchmark import BenchmarkConfig, ResumeMode, run_benchmark
 
-## `scripts/run_single.py`
+bench_cfg = BenchmarkConfig(
+    benchmark_name="demo_benchmark",
+    models=["itemcf"],
+    datasets=["taac2026_data_sample"],
+    seeds=[42, 43],
+    resume_mode=ResumeMode.SUCCESSFUL_SKIP,
+)
 
-源码位置：
-
-- `scripts/run_single.py`
-
-### 当前状态
-
-- 入口骨架已存在
-- 推荐长期成为单实验命令行入口
-
-### 推荐用法
-
-```bash
-uv run python scripts/run_single.py --config configs/experiment/single.yaml
-uv run python scripts/run_single.py model=deepfm dataset=taac2026
+result = run_benchmark(bench_cfg)
+print(result.status)
+print(result.summary_path)
 ```
 
-### 推荐职责
+## Reporter API
 
-- 接收 CLI 参数
-- 调用配置加载器
-- 调用 `run_experiment()`
+`src/recsys/pipeline/reporter.py` 当前负责聚合单实验结果并输出可扫描文件。
 
-### 不应承担
+### 当前产物
 
-- 直接实现实验主逻辑
+- `summary.csv`
+- `leaderboard.csv`
+- `failures.csv`
+- `trend.csv`
+- `stability.csv`
+- `report.html`
 
-## `scripts/run_benchmark.py`
+### 当前入口
 
-源码位置：
-
-- `scripts/run_benchmark.py`
-
-### 当前状态
-
-- 入口骨架已存在
-- 推荐长期成为批量 benchmark 命令行入口
-
-### 推荐用法
-
-```bash
-uv run python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
-uv run python scripts/run_benchmark.py experiment=benchmark_classical runtime=ci
+```python
+Reporter(config).generate(results)
 ```
 
-### 推荐职责
+## CLI 边界
 
-- 接收 benchmark 配置
-- 调用 `run_benchmark()`
-- 输出进度与结果摘要
+`scripts/run_single.py`、`scripts/run_benchmark.py`、`scripts/generate_report.py` 当前仍是占位骨架。
 
-## 返回格式规范
+因此：
 
-对所有公共运行时 API，推荐返回结果遵守以下原则：
+- 文档不应把它们写成稳定 CLI
+- 示例不应宣传“直接可运行”的命令行工作流
+- 当前更适合推荐 Python API 调用方式
 
-- 优先返回结构化对象，而不是裸字符串
+## 返回格式原则
+
+当前公共运行时 API 基本遵守以下原则：
+
+- 返回结构化对象，而不是裸字典或裸字符串
 - 主结果与错误信息分离
 - artifact 路径显式暴露
-- 需要汇总的指标单独放在 `summary_metrics`
+- 摘要指标集中在 `summary_metrics`
 
-## 调用示例
+## 当前最重要的边界结论
 
-### 查询模型注册表
-
-```python
-from recsys.core.registry import MODEL_REGISTRY
-
-available = MODEL_REGISTRY.list()
-print(available)
-```
-
-### 加载数据集并构造 DataLoader
-
-```python
-from recsys.data.datasets.taac2026 import TAAC2026DataSample
-
-dataset = TAAC2026DataSample(root_dir="./data").load()
-train_loader = dataset.get_dataloader("train", batch_size=256)
-```
-
-### 运行单实验
-
-```python
-result = run_experiment(config)
-if result["status"] != "succeeded":
-    print(result["error"])
-```
-
-### 运行 benchmark
-
-```python
-benchmark_result = run_benchmark(config)
-print(benchmark_result["leaderboard_path"])
-```
-
-## 兼容性与版本化规则
-
-公共 API 一旦被文档声明，就应遵守以下规则：
-
-- 新增字段优先向后兼容
-- 删除字段必须经过版本说明
-- 错误码语义不得随意复用
-- CLI 入口参数变更必须同步更新文档与示例
-
-## 需要避免的反模式
-
-请尽量避免：
-
-- 把内部私有函数当作公共 API 宣传
-- 返回结构随版本频繁变化
-- 没有错误语义，只抛出不明异常
-- CLI 和 Python API 契约不一致
-- 文档承诺与源码骨架不一致
-
-## 一句话总结
-
-对 RecBench 来说，最佳实践不是“先写一堆调用示例”，而是：
-
-- 先收敛稳定的 Python 与 CLI 公共入口
-- 再统一参数、返回与错误语义
-- 用文档把当前已承诺的 API 边界固定下来
+- 顶层包导出、模型发现、配置、评估、训练基础设施、单实验与批量 Benchmark API 都已存在
+- “公共 API 已存在”不代表“对应能力已经全部接通”
+- 当前应把 Python API 视为正式入口，把 CLI 视为未来补齐项

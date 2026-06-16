@@ -1,94 +1,50 @@
 ---
 title: Operations Overview
-description: 运维与工具目录、缓存清理、日志管理与本地站点生成总览
+description: 仓库维护、文档站构建与结果目录管理总览
 ---
 
 # Operations Overview
 
 ## 目录目标
 
-`docs/operations/` 负责沉淀项目维护、工具使用和运维流程。
+`docs/operations/` 用于沉淀仓库维护和日常运维流程。
 
 它主要回答：
 
-- 项目如何维护
-- 文档站如何生成
-- 缓存、日志、结果目录如何管理
+- 仓库如何维护
+- 文档站如何构建
+- 输出目录如何管理
 - 哪些流程属于维护者职责
 
-## 当前已有内容
+## 当前重点
 
-当前该目录已有：
+结合当前仓库状态，operations 目录最重要的关注点包括：
 
-- [Maintenance Guide](maintenance.md)
+- 本地与 CI 中的依赖和检查命令保持一致
+- 文档站构建始终可通过 `zensical build --strict --clean`
+- `outputs/` 下实验结果与 Benchmark 聚合结果的管理
+- 维护文档、README、配置和代码状态的一致性
 
-它主要覆盖 CI、发布、文档部署和维护优先级。
+## 与其他目录的边界
 
-## 推荐后续结构
+- 架构原则与概念解释：放 `docs/concepts/`
+- API、artifact、pipeline 契约：放 `docs/project/`
+- 工程实践技巧：放 `docs/guides/`
+- 论文背景：放 `docs/papers/`
 
-建议逐步演进到：
+## 当前推荐补充的运维主题
 
-```text
-docs/operations/
-|-- overview.md
-|-- maintenance.md
-|-- cache-cleanup.md
-|-- log-management.md
-`-- local-site-overview.md
-```
-
-## 各页面职责
-
-### `maintenance.md`
-
-职责：
-
-- CI、发布、文档部署、维护优先级
-
-### `cache-cleanup.md`
-
-职责：
-
-- 说明如何清理本地缓存、依赖缓存、实验输出缓存
-
-### `log-management.md`
-
-职责：
-
-- 说明日志目录规范、保留策略、错误排查入口
-
-### `local-site-overview.md`
-
-职责：
-
-- 说明如何本地生成文档站、如何校验导航与链接
-
-## 推荐维护主题
-
-当前最值得优先补的 operations 页面包括：
-
-1. 仓库缓存清理
-2. 仓库日志管理
-3. 本地生成站点总览
+- 输出目录清理与归档
+- 日志与失败排查入口
+- 本地文档站构建说明
+- CI 与文档导航一致性检查
 
 ## 文件命名规范
 
-统一使用小写与连字符：
+- 使用小写
+- 使用连字符
+- 名称直接反映维护主题
 
-- `cache-cleanup.md`
-- `log-management.md`
-- `local-site-overview.md`
+## 当前最重要的结论
 
-## 运维文档边界
-
-运维文档不应承担：
-
-- 模型原理论文解读
-- 数据契约定义
-- API 契约定义
-
-这些内容分别应回到 `papers/`、`project/`、`concepts/`。
-
-## 一句话总结
-
-`docs/operations/` 的职责是让维护流程稳定、可执行、可重复，而不是替代项目架构或实验文档。
+`docs/operations/` 当前应该围绕“如何稳定维护当前已实现主干”展开，而不是延展到架构、实验或论文层面的内容。

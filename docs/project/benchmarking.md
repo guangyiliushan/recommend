@@ -1,139 +1,110 @@
 ---
 title: Benchmarking Guide
-description: 单实验、批量 benchmark、结果目录与失败恢复策略
+description: 当前批量 Benchmark 实现、恢复策略与聚合产物
 ---
 
 # Benchmarking Guide
 
 ## 目标
 
-RecBench 的 benchmark 层不应只是“循环跑一堆模型”，而应满足以下目标：
+RecBench 的 Benchmark 层负责组织多个单实验、隔离失败、支持恢复，并把结果聚合成可比较的 CSV 与 HTML 报告。
 
-- 区分单实验与批量 benchmark 的职责
-- 让模型、数据集、指标组合可复用、可追踪
-- 让结果目录稳定且便于比较
-- 让失败任务隔离，不阻塞整批实验
-- 让中断后能够恢复，而不是整批重跑
+当前仓库中，这一层已经由 `src/recsys/pipeline/benchmark.py` 和 `src/recsys/pipeline/reporter.py` 落地实现。
 
-当前仓库已经有：
+## 当前入口
 
-- `src/recsys/pipeline/benchmark.py`
-- `src/recsys/pipeline/reporter.py`
-- `scripts/run_benchmark.py`
-- `configs/experiment/*.yaml`
+批量 Benchmark 的公共入口是：
 
-但这些文件目前仍以骨架为主，因此这份文档重点约束“应该怎么设计和落地”。
+```python
+run_benchmark(bench_cfg: BenchmarkConfig) -> BenchmarkResult
+```
 
-## 先区分单实验与批量 benchmark
+## 单实验与批量 Benchmark 的边界
 
-这是当前最重要的边界。
+当前代码已经明确拆分：
 
-### 单实验
+- `run_experiment()`：负责一次实验
+- `run_benchmark()`：负责多次实验矩阵展开与调度
+- `Reporter.generate()`：负责聚合已完成的实验结果
 
-单实验的目标是：
+这三个层次在文档中也必须保持清晰边界，避免把 Benchmark 写成“包办训练、评估、调度、聚合的一体化黑盒”。
 
-- 跑通一个确定的配置组合
-- 得到一次完整训练或推理结果
-- 输出该次实验的模型、指标、日志和 artifact
+## 当前已实现能力
 
-典型例子：
+### 1. 实验矩阵展开
 
-- 一个模型 + 一个数据集 + 一组固定超参数
+`BenchmarkConfig` 当前支持：
 
-### 批量 benchmark
+- `benchmark_name`
+- `models`
+- `datasets`
+- `seeds`
+- `experiment_preset`
+- `training_preset`
+- `evaluation_preset`
+- `runtime_preset`
+- `resume_mode`
+- `max_concurrent_runs`
+- `output_root`
+- `experiment_output_dir`
 
-批量 benchmark 的目标是：
+矩阵展开规则是：
 
-- 组织多个单实验组合
-- 收集并聚合它们的结果
-- 形成 leaderboard、对比表和汇总报告
+- `models × datasets × seeds`
 
-典型例子：
+每个组合会生成一份独立的 `ExperimentConfig`。
 
-- 多个模型 × 一个数据集
-- 一个模型 × 多个数据集
-- 多个模型 × 多个数据集 × 多个种子
+### 2. 恢复策略
 
-### 为什么必须拆开
+当前已经实现四种恢复模式：
 
-如果不拆这两个层次，后面很容易出现：
+- `successful_skip`
+- `failed_only`
+- `unfinished_only`
+- `force`
 
-- benchmark runner 知道太多训练细节
-- 单实验逻辑无法单独测试
-- 报错和恢复粒度只能按整批处理
+恢复判断会结合：
 
-因此最佳实践是：
+- `status.json`
+- `metrics.json`
+- `config.yaml`
+- `config_hash`
 
-- `pipeline.py` 或 `experiment.py` 负责单实验
-- `benchmark.py` 负责批量调度与聚合
+这意味着恢复逻辑当前已经是代码实现，不再只是文档约定。
 
-## Benchmark 的最小职责
+### 3. 调度执行
 
-一个成熟的 benchmark runner 至少应负责：
+当前 Benchmark 层支持两种执行方式：
 
-- 展开实验矩阵
-- 为每个组合生成稳定的 run 标识
-- 调用单实验入口
-- 捕获成功与失败状态
-- 按统一格式写出结果摘要
-- 生成聚合报告
+- 串行执行
+- 受控并发执行
 
-它不应直接负责：
+并发粒度是“实验组合级别”，而不是更细粒度的 step 或 batch 级别调度。
 
-- 具体模型训练逻辑
-- 数据预处理细节
-- 评估指标内部实现
+### 4. 失败隔离
 
-## 推荐的组合展开方式
+当前一个 run 失败不会阻塞整批 Benchmark。
 
-benchmark 配置更适合描述“实验清单”，而不是复制一整份完整配置。
+失败会被收集到结构化 `ExperimentResult` 中，后续再由 `Reporter` 聚合为 `failures.csv`。
 
-推荐由 `configs/experiment/*.yaml` 描述：
+### 5. 聚合报告
 
-- 要跑哪些模型
-- 要跑哪些数据集
-- 要跑哪些 seed
-- 使用哪组训练/evaluation/runtime 预设
+Reporter 当前已生成：
 
-例如，benchmark 配置更像：
+- `summary.csv`
+- `leaderboard.csv`
+- `failures.csv`
+- `trend.csv`
+- `stability.csv`
+- `report.html`
 
-- `models = [itemcf, mf, deepfm]`
-- `datasets = [taac2026]`
-- `seeds = [2026, 2027, 2028]`
+Benchmark 层自身还会额外写出：
 
-而不是在 benchmark 文件里重复写一整套 optimizer、scheduler、metrics 细节。
+- `manifest.json`
 
-## 推荐的执行单元
+## 当前目录结构
 
-benchmark 的基本执行单元应该是：
-
-- 一个 fully resolved experiment config
-
-也就是说，在真正执行前，每个组合都应先被解析成一份完整配置快照，包含：
-
-- 数据集选择
-- 模型选择
-- 训练参数
-- 评估参数
-- runtime 参数
-- 输出路径
-
-这样每个 run 才能独立复现。
-
-## 结果目录应该怎么设计
-
-### 总体原则
-
-结果目录必须满足：
-
-- 人类可读
-- 程序可扫描
-- 中断后可恢复
-- 聚合时不依赖猜测文件名
-
-### 推荐目录结构
-
-建议长期统一到如下结构：
+当前文档应围绕如下目录结构说明：
 
 ```text
 outputs/
@@ -144,7 +115,6 @@ outputs/
 |       |-- metrics.json
 |       |-- predictions.parquet
 |       |-- curves/
-|       |-- checkpoints/
 |       `-- logs/
 `-- benchmarks/
     `-- {benchmark_name}/
@@ -152,303 +122,142 @@ outputs/
         |-- summary.csv
         |-- leaderboard.csv
         |-- failures.csv
-        |-- report.html
-        `-- runs/
-            |-- {run_id_1}.link
-            |-- {run_id_2}.link
-            `-- ...
+        |-- trend.csv
+        |-- stability.csv
+        `-- report.html
 ```
 
-### 目录分层解释
+## `run_id` 与执行单元
 
-- `experiments/`: 保存每一次独立实验的原子结果
-- `benchmarks/`: 保存整批 benchmark 的聚合视图
+Benchmark 当前的原子执行单元是“一份冻结后的 `ExperimentConfig`”。
 
-这个分层很重要，因为：
+每个执行单元都会：
 
-- 单实验可以独立调试
-- benchmark 可以引用多个已有 run
-- 后续做 resume 时不需要重新解释历史目录
+- 独立拥有 `run_id`
+- 独立拥有实验目录
+- 独立返回 `ExperimentResult`
 
-## `run_id` 应该怎么生成
+这样 Benchmark 层只需要关心调度、恢复和聚合，而不必深入训练或评估内部实现。
 
-推荐 `run_id` 由稳定字段组成，而不是只靠时间戳。
+## 当前返回对象
 
-建议至少包含：
+`BenchmarkResult` 当前重点字段包括：
 
-- benchmark 或 experiment 名称
-- dataset 名
-- model 名
-- seed
-- 可选的配置 hash
-
-例如：
-
-- `taac2026__deepfm__seed2026`
-- `benchmark_classical__itemcf__taac2025__seed42`
-
-如果担心同名覆盖，可以附加短 hash：
-
-- `taac2026__deepfm__seed2026__a1b2c3`
-
-## 单实验结果里最少要保存什么
-
-为了让 benchmark 可恢复、可比较，单实验目录最少应保存：
-
-- `config.yaml`: 完整解析后的配置快照
-- `status.json`: 当前 run 状态
-- `metrics.json`: 结构化指标结果
-- `logs/`: 训练与运行日志
-
-如果任务允许，建议进一步保存：
-
-- `predictions.parquet`
-- `curves/`
-- `checkpoints/`
-- `artifacts/`
-
-## `status.json` 的推荐字段
-
-失败恢复最关键的是状态文件。
-
-推荐至少记录：
-
-- `run_id`
+- `benchmark_name`
 - `status`
-- `started_at`
-- `finished_at`
-- `dataset`
-- `model`
-- `seed`
-- `error_type`
-- `error_message`
-- `resume_supported`
+- `runs`
+- `summary_path`
+- `leaderboard_path`
+- `failures_path`
+- `manifest_path`
+- `report_path`
+- `metadata`
 
-其中 `status` 建议统一为：
+其中 `status` 可能为：
 
-- `pending`
-- `running`
 - `succeeded`
+- `partial_success`
 - `failed`
-- `skipped`
 
-## 批量 benchmark 的聚合结果
+## 当前恢复语义
 
-benchmark 完成后，最少应输出：
+### `successful_skip`
 
-- `manifest.json`
-- `summary.csv`
-- `leaderboard.csv`
-- `failures.csv`
+- 已成功的 run 默认跳过
+- 适合增量补跑未完成实验
 
-### `manifest.json`
+### `failed_only`
 
-它是整批实验的索引文件，建议记录：
+- 仅重试失败 run
+- 已成功和未开始的 run 会被跳过
 
-- benchmark 名称
-- 参与的 runs
-- 配置快照位置
-- 聚合时间
-- 成功/失败数量
+### `unfinished_only`
+
+- 仅继续未完成 run
+- 已成功和已失败 run 会被跳过
+
+### `force`
+
+- 强制重跑全部组合
+
+## 当前 Reporter 产物说明
 
 ### `summary.csv`
 
-每一行代表一次单实验，建议字段包括：
+逐 run 展平表，适合查看每次实验的：
 
-- `run_id`
-- `dataset`
-- `model`
-- `seed`
-- `status`
-- `primary_metric`
-- 主要指标列
+- 模型
+- 数据集
+- seed
+- status
+- 主指标与摘要指标
 
 ### `leaderboard.csv`
 
-它用于排序展示，通常基于主指标排序，并可附加：
+聚合排序表，适合查看：
 
-- mean
-- std
-- rank
+- 同一模型在同一数据集上的平均表现
+- 均值、方差与排名
 
 ### `failures.csv`
 
-它用于失败排查，建议记录：
+失败排查表，适合定位：
 
-- `run_id`
-- `dataset`
-- `model`
-- `seed`
-- `error_type`
-- `error_message`
+- 哪个组合失败
+- 失败阶段
+- 错误码
+- 错误信息
 
-## 失败隔离策略
+### `trend.csv`
 
-这是 benchmark 系统能否长期使用的关键。
+趋势表，适合分析：
 
-### 推荐原则
+- 多 seed 实验的逐 run 变化
+- 主指标随 run 的波动
 
-- 单个 run 失败不能阻塞整批 benchmark
-- 失败必须有结构化记录
-- 失败信息必须能定位到具体组合
+### `stability.csv`
 
-### 当前仓库已经有的方向
+稳定性表，适合分析：
 
-`benchmark.py` 的骨架注释已经明确写了：
+- 多 seed 聚合的均值
+- 标准差
+- 变异系数
 
-- failed experiments don't block others
+### `report.html`
 
-这个方向是正确的，后续实现时应保留。
+面向人工浏览的聚合摘要页。
 
-### 推荐处理方式
+## 最小示例
 
-每个实验组合在 benchmark 中都应包裹统一的错误边界：
+```python
+from recsys.pipeline.benchmark import BenchmarkConfig, ResumeMode, run_benchmark
 
-- 捕获异常
-- 写入该 run 的 `status.json`
-- 将失败摘要写入 `failures.csv`
-- 继续下一个组合
+bench_cfg = BenchmarkConfig(
+    benchmark_name="demo_benchmark",
+    models=["itemcf"],
+    datasets=["taac2026_data_sample"],
+    seeds=[42, 43],
+    resume_mode=ResumeMode.SUCCESSFUL_SKIP,
+    max_concurrent_runs=1,
+    output_root="./outputs",
+    experiment_output_dir="./outputs/experiments",
+)
 
-不要只在控制台打印报错然后继续，否则后面很难统计和恢复。
+result = run_benchmark(bench_cfg)
+print(result.status)
+print(result.summary_path)
+print(result.report_path)
+```
 
-## 失败恢复策略
+## 当前限制
 
-### 最重要的原则
+文档必须明确保留下面这些限制：
 
-恢复不应靠“人工判断哪些目录看起来没跑完”，而应依赖明确状态。
+- `run_benchmark()` 依赖 `run_experiment()`，而后者的训练型路径尚未完成
+- benchmark 预设名当前只是被写入运行配置，还没有形成完整的统一配置解析体系
+- 当前仓库中的部分 `configs/experiment/*.yaml` 仍引用了未实现模型或未注册数据集，不能直接当作“现成可运行配置”宣传
+- `scripts/run_benchmark.py` 仍是占位脚本，不应作为稳定 CLI 入口写入文档
 
-### 推荐恢复语义
+## 当前最重要的结论
 
-benchmark runner 启动时应支持：
-
-- 跳过已成功的 runs
-- 重试失败的 runs
-- 继续未完成的 runs
-- 强制重跑所有 runs
-
-建议至少支持以下模式：
-
-- `resume=successful_skip`
-- `resume=failed_only`
-- `resume=unfinished_only`
-- `resume=force`
-
-### 如何判断一个 run 可恢复
-
-推荐按以下顺序判断：
-
-1. 是否存在 `status.json`
-2. `status` 是否为 `succeeded`
-3. 关键产物是否齐全，如 `metrics.json`
-4. 配置 hash 是否匹配当前请求
-
-只有同时满足条件，才真正视为“可跳过”。
-
-## 中断恢复与幂等性
-
-benchmark runner 必须尽量幂等。
-
-这意味着：
-
-- 重复执行同一个 benchmark，不应生成一堆不可区分的重复目录
-- 已成功的 run 默认可复用
-- 失败的 run 默认可追踪
-
-如果没有幂等性，后面结果目录会很快变成垃圾堆。
-
-## 并发策略怎么选
-
-当前 `benchmark.py` 的说明提到：
-
-- Parallel execution
-
-但最佳实践是先保证稳定，再扩并发。
-
-### 推荐阶段性策略
-
-第一阶段：
-
-- 串行执行 benchmark
-- 优先把状态、结果目录和失败恢复做稳
-
-第二阶段：
-
-- 引入受控并发
-- 并发粒度放在“实验组合级别”
-
-第三阶段：
-
-- 根据设备资源进一步做 GPU-aware 调度
-
-### 为什么不要一开始就高并发
-
-因为推荐实验通常涉及：
-
-- GPU 内存争抢
-- 数据加载冲突
-- checkpoint 写入冲突
-- 日志目录冲突
-
-这些问题在运行时主干未稳定前会放大复杂度。
-
-## 单实验与 benchmark 的接口契约
-
-benchmark runner 最好只依赖单实验统一接口，例如：
-
-- 输入：一份完整 experiment config
-- 输出：一份结构化 experiment result
-
-推荐 experiment result 至少包含：
-
-- `run_id`
-- `status`
-- `summary_metrics`
-- `artifact_paths`
-- `error`
-
-这样 benchmark 层就不需要了解训练内部细节。
-
-## 汇总与统计的边界
-
-批量 benchmark 不只是“把结果拼表格”，还应区分：
-
-- 原始 run 结果
-- 聚合统计结果
-- 排行榜视图
-- 可视化报告
-
-推荐分层：
-
-- `metrics.json`: 单次 run 原始结果
-- `summary.csv`: 全部 run 展平结果
-- `leaderboard.csv`: 排序后的聚合结果
-- `report.html`: 可读报告
-
-## 当前仓库的落地建议
-
-结合现有骨架，我建议按以下顺序推进：
-
-1. 先稳定 `run_experiment()` 的结构化输出
-2. 再实现 `run_benchmark()` 的矩阵展开与错误隔离
-3. 再实现 `Reporter` 的 CSV 与 leaderboard 生成
-4. 最后再加入并发和高级可视化
-
-## 需要避免的反模式
-
-请尽量避免：
-
-- benchmark 文件重复拷贝整套训练配置
-- 没有 `status.json` 就尝试恢复
-- 每次运行都重新生成不可追踪目录
-- 单个 run 失败后直接中止整批实验
-- 结果目录里只留图片，不留结构化原始结果
-- benchmark runner 直接耦合模型或 trainer 内部实现
-
-## 一句话总结
-
-对 RecBench 来说，最佳实践不是“尽快把所有组合都跑起来”，而是：
-
-- 用单实验作为原子执行单元
-- 用 benchmark 组织实验矩阵与聚合结果
-- 用稳定目录结构保存 run 状态与 artifact
-- 用显式恢复策略保证长批任务可持续运行
+RecBench 的 Benchmark 层已经具备矩阵展开、恢复模式、失败隔离、受控并发和结果聚合能力。当前最需要文档诚实表达的，不是“Benchmark 还没实现”，而是“Benchmark 主干已实现，但其可运行范围仍受单实验可运行模型范围限制”。

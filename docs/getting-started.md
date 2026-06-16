@@ -1,13 +1,13 @@
 ---
 title: Getting Started
-description: 本地环境、常用命令和文档构建方式
+description: 本地环境、常用命令与当前推荐入门路径
 ---
 
 # Getting Started
 
 ## 环境约定
 
-本仓库推荐统一使用 `uv` 管理 Python 环境与依赖，以保持和 GitHub Actions 一致。
+本仓库统一使用 `uv` 管理 Python 环境与依赖，以保持与 CI 和文档示例一致。
 
 ## 安装依赖
 
@@ -15,48 +15,104 @@ description: 本地环境、常用命令和文档构建方式
 uv sync --extra dev
 ```
 
-这一步会安装开发、测试和文档构建所需的依赖。
+这一步会安装开发、测试与文档构建所需依赖。
 
 ## 常用命令
 
-运行测试：
-
-```bash
-uv run pytest -v
-```
-
-运行静态检查：
+### 静态检查
 
 ```bash
 uv run ruff check .
 ```
 
-构建文档站点：
+### 测试
+
+```bash
+uv run pytest -v
+```
+
+说明：当前测试覆盖仍在逐步建设中，测试通过不等于所有模块都已经完整落地。
+
+### 构建文档站
 
 ```bash
 uv run zensical build --strict --clean
 ```
 
-## 仓库重要目录
+## 当前推荐的阅读顺序
 
-- `src/recsys`: 主业务代码
-- `configs`: 配置入口
-- `scripts`: 用户执行脚本
-- `tests`: 测试目录
-- `docs`: 文档站点源码
-- `.github/workflows`: 自动化工作流
+如果你想先理解项目，建议依次阅读：
 
-## 当前推荐的使用方式
+1. `README.md`
+2. `docs/index.md`
+3. `docs/concepts/architecture.md`
+4. `docs/concepts/configuration.md`
+5. `docs/project/pipeline.md`
+6. `docs/project/evaluation.md`
 
-如果你只是希望理解或维护项目，建议优先：
+## 当前推荐的代码入口
 
-1. 阅读 `README.md`
-2. 阅读 `docs/concepts/architecture.md`
-3. 查看 `src/recsys/core` 与 `src/recsys/data`
-
-如果你希望开始开发，建议先从以下模块着手：
+如果你要从代码快速建立整体认知，建议优先看：
 
 - `src/recsys/core/registry.py`
-- `src/recsys/core/base_dataset.py`
 - `src/recsys/core/base_model.py`
+- `src/recsys/core/prediction_bundle.py`
 - `src/recsys/pipeline/experiment.py`
+- `src/recsys/pipeline/benchmark.py`
+- `src/recsys/evaluation/evaluator.py`
+
+## 当前最适合验证的路径
+
+当前仓库里最适合作为最小闭环理解入口的是：
+
+1. 自动发现模型
+2. 获取 `itemcf`
+3. 理解 `run_experiment()` 的非训练路径
+4. 理解 `evaluate()` 如何消费 `PredictionBundle`
+5. 理解 `run_benchmark()` 与 `Reporter` 如何聚合结果
+
+## Python API 快速示例
+
+### 模型发现
+
+```python
+from recsys import auto_discover_models, get_model, list_models
+
+auto_discover_models()
+print(list_models())
+
+ItemCF = get_model("itemcf")
+model = ItemCF(similarity="cosine")
+```
+
+### 单实验入口
+
+```python
+from recsys.pipeline.experiment import ExperimentConfig, run_experiment
+
+cfg = ExperimentConfig(
+    experiment_name="demo_itemcf",
+    dataset_name="taac2026_data_sample",
+    model_name="itemcf",
+    seed=42,
+    output_dir="./outputs/experiments",
+)
+
+result = run_experiment(cfg)
+print(result.status)
+```
+
+## 当前需要特别注意的现实边界
+
+- `scripts/` 下 CLI 入口仍是骨架，不建议把它们当现成命令使用
+- 大多数模型目录文件仍是占位，当前最清晰可运行的模型主要是 `itemcf`
+- 训练型模型路径尚未在 experiment 主流程中接通
+
+## 仓库重要目录
+
+- `src/recsys`：核心源码
+- `configs`：配置与实验矩阵
+- `docs`：文档站源码
+- `tests`：测试
+- `outputs`：实验与 Benchmark 结果目录
+- `.github/workflows`：自动化工作流

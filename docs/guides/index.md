@@ -1,83 +1,66 @@
 ---
 title: Guides
-description: 技术指南、工程实践文章与专题说明目录
+description: 工程实践、调优技巧与专题说明目录
 ---
 
 # Guides
 
 ## 目录目标
 
-`docs/guides/` 用于沉淀工程实践、技术专题和方法指南。
+`docs/guides/` 用于沉淀“如何更好地使用当前基础设施”的专题说明。
 
-它面向的是：
+它更适合回答：
 
-- 想落地工程实践的开发者
-- 想复用推荐训练技巧的维护者
-- 需要专题说明而不是契约文档的读者
+- 这件事在当前仓库里怎么做
+- 哪些配置组合更合适
+- 有哪些限制和注意事项
 
-## 推荐内容范围
+而不是回答公共 API 或工程契约本身。
 
-适合放在这里的主题包括：
+## 当前最值得扩展的主题
 
-- 学习率调度
-- 梯度检查点
-- Host Device Info
-- Online Dataset EDA
-- profiling 与性能优化
-- 多 GPU 运行建议
+结合当前代码实现，最适合优先补成指南页的主题包括：
 
-## 与其他目录的边界
+- 学习率调度与 warmup 选择
+- 设备选择与 `get_device()` 使用方式
+- profiling 与性能分析
+- 日志与追踪后端使用方式
+- 多 GPU 与 `ddp` 运行建议
 
-- 若内容是“项目必须遵守的契约”，放到 `docs/project/`
-- 若内容是“概念原理”，放到 `docs/concepts/`
-- 若内容是“运维流程”，放到 `docs/operations/`
-- 若内容是“论文解读”，放到 `docs/papers/`
+这些主题已经有真实代码落点，不是空泛预留。
 
-## 推荐后续结构
+## 当前不应误写成指南页的内容
 
-```text
-docs/guides/
-|-- index.md
-|-- learning-rate-scheduling.md
-|-- gradient-checkpointing.md
-|-- host-device-info.md
-|-- online-dataset-eda.md
-`-- profiling-and-optimization.md
-```
+下面这些内容更适合留在其他目录：
 
-## 页面模板建议
+- 公共契约：放 `docs/project/`
+- 架构原则：放 `docs/concepts/`
+- 运维流程：放 `docs/operations/`
+- 论文背景：放 `docs/papers/`
+
+## 推荐页面模板
 
 每个 guide 页面建议至少包含：
 
 1. 主题目标
-2. 适用场景
-3. 当前项目中的落点
-4. 推荐配置或做法
+2. 当前仓库中的适用范围
+3. 推荐配置或 API 用法
+4. 常见误区
 5. 风险与注意事项
-6. 参考链接或关联文档
+6. 关联文档
 
 ## 文件命名规范
 
-统一使用：
+- 使用小写
+- 使用连字符
+- 名称直接反映主题
 
-- 小写
-- 连字符
-- 避免缩写歧义
-
-推荐示例：
+例如：
 
 - `learning-rate-scheduling.md`
-- `gradient-checkpointing.md`
+- `device-selection.md`
+- `profiling-and-optimization.md`
 
-## 当前阶段建议
+## 当前最重要的结论
 
-当前项目最值得优先补的 guide 包括：
-
-1. 学习率调度
-2. 梯度检查点
-3. Host Device Info
-4. Online Dataset EDA
-
-## 一句话总结
-
-`docs/guides/` 负责回答“这件事怎么做更好”，而不是回答“项目必须遵守什么契约”。
+`docs/guides/` 当前应聚焦“围绕已实现基础设施给出实践建议”，而不是为尚未落地的功能提前建立指南目录。

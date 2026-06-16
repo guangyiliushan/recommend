@@ -1,66 +1,58 @@
 ---
 title: Experiments
-description: 实验文档目录、benchmark 套件、baseline 页面与模型实验说明规范
+description: 实验页面目录、当前最小基线与后续实验页组织方式
 ---
 
 # Experiments
 
 ## 目录目标
 
-`docs/experiments/` 用于承接所有“实验面”的文档，而不是承接所有工程规范文档。
+`docs/experiments/` 用于沉淀“实验层”的说明：
 
-这个目录主要描述：
+- 当前有哪些实验线值得维护
+- 每条实验线对应哪些模型与数据集
+- 推荐如何复现与比较
+- 哪些实验页已经值得单独成文
 
-- benchmark 套件
-- baseline 与 baseline+ 页面
-- 重点模型实验说明
-- 实验矩阵与比较规则
+它不承担 API、数据契约或架构原则说明，这些内容仍应回到 `docs/project/` 与 `docs/concepts/`。
 
-## 与其他目录的边界
+## 当前仓库适合写成实验页的内容
 
-- 概念与架构原理放在 `docs/concepts/`
-- 数据、评估、pipeline、API、契约放在 `docs/project/`
-- 工程实践文章放在 `docs/guides/`
-- 论文笔记放在 `docs/papers/`
-- 运维流程放在 `docs/operations/`
+结合当前实现状态，最适合优先沉淀的实验主题是：
 
-## 推荐后续结构
+- `itemcf` 最小闭环实验
+- 单实验非训练路径验证
+- 多 seed 的基础 Benchmark 聚合流程
 
-建议后续逐步演进到：
+原因很简单：这些路径已经有真实代码支撑，而不是纯目录占位。
 
-```text
-docs/experiments/
-|-- index.md
-|-- benchmark-classical.md
-|-- benchmark-performance.md
-|-- baseline.md
-|-- baseline-plus.md
-|-- symbiosis.md
-|-- rankup.md
-|-- interformer.md
-|-- onetrans.md
-|-- tokenformer.md
-`-- unirec.md
-```
+## 当前实验层的现实边界
 
-## 页面分类规则
+当前需要特别注意：
 
-### benchmark 套件页
+- 批量 Benchmark 主干已实现，但可运行范围受可运行模型范围限制
+- 训练型 experiment 路径尚未接通，因此训练模型实验页不应写成“已可复现”
+- `scripts/` 中 CLI 入口仍是骨架，实验页应优先给出 Python API 复现方式
+
+## 页面类型建议
+
+### 基线实验页
 
 适合描述：
 
-- 这套实验跑哪些模型
-- 这套实验跑哪些数据集
+- 当前仓库中已经可运行的最小基线
+- 输入数据要求
+- 推荐评估指标
+- 输出 artifact
+
+### Benchmark 套件页
+
+适合描述：
+
+- 该套件跑哪些模型
+- 跑哪些数据集
 - 主指标是什么
-- 如何复现
-
-### baseline 页面
-
-适合描述：
-
-- 基线集合
-- 推荐执行顺序
-- 为什么这些基线足以构成最小对照组
+- 聚合产物如何解读
 
 ### 单模型实验页
 
@@ -70,37 +62,31 @@ docs/experiments/
 - 当前仓库实现状态
 - 所需数据字段
 - 推荐配置
-- 指标与结果解释方式
+- 当前限制
 
-## 文件命名规范
-
-统一使用小写加连字符：
-
-- `benchmark-classical.md`
-- `benchmark-performance.md`
-- `baseline-plus.md`
-- `interformer.md`
-
-## 页面最小模板
+## 推荐页面模板
 
 每个实验页建议至少包含：
 
 1. 页面目标
-2. 适用模型或实验套件
-3. 输入数据要求
-4. 推荐配置
+2. 当前仓库支持范围
+3. 数据集与模型要求
+4. 推荐配置或 API 示例
 5. 评估方式
 6. 输出 artifact
 7. 常见失败与排查
 
-## 当前阶段建议
+## 文件命名规范
 
-当前仓库还未完成完整 benchmark runtime，因此这个目录应先用于：
+- 使用小写
+- 使用连字符
+- 让名称直接反映实验主题
 
-- 固定实验命名
-- 固定实验矩阵说明
-- 防止未来每条实验线随意命名和混放
+例如：
 
-## 一句话总结
+- `baseline-itemcf.md`
+- `benchmark-itemcf-multiseed.md`
 
-`docs/experiments/` 的目标不是堆放结果截图，而是把“要跑什么实验、怎么比较、怎么复现”固定成一套稳定页面体系。
+## 当前最重要的结论
+
+`docs/experiments/` 当前最该承接的是“真实能跑的实验线路说明”，而不是提前为尚未接通的模型家族堆放实验页面。

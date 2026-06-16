@@ -1,93 +1,110 @@
 # Contributing to RecBench
 
-Thanks for considering a contribution to RecBench.
+感谢你关注 RecBench。
 
-This repository is in an active architecture-building phase. That means high-value contributions are the ones that strengthen contracts, reproducibility, and maintainability before adding broad algorithm coverage.
+当前仓库最有价值的贡献，不是一次性补很多模型，而是继续增强共享契约、最小可运行闭环、文档准确性和工程一致性。
 
-## Before You Start
+## 开始前先阅读
 
-Please read:
+请至少先阅读：
 
 - `README.md`
-- `docs/architecture.md`
-- `docs/development.md`
-- `docs/models.md`
+- `docs/index.md`
+- `docs/concepts/architecture.md`
+- `docs/concepts/configuration.md`
+- `docs/project/development.md`
+- `docs/project/models.md`
 
-## Working Agreement
+## 当前协作原则
 
-- Use `uv` for Python environment management to stay consistent with CI
-- Keep changes aligned with the package root `src/recsys`
-- Prefer small, reviewable pull requests over broad rewrites
-- Do not describe unfinished modules as production-ready
-- Add or update tests when a change affects contracts or behavior
+- 统一使用 `uv` 管理 Python 环境与依赖
+- 所有核心实现都应围绕包根 `src/recsys`
+- 优先提交小而可审阅的 PR
+- 不要把占位模块或规划能力描述成“已完成”
+- 改变公共行为、配置或文档入口时，要同步更新文档
+- 改动影响契约或运行行为时，补充对应测试或说明暂未补测的原因
 
-## What To Contribute First
+## 当前优先级
 
-Good first categories:
+优先级更高的贡献方向：
 
-- config normalization
-- registry improvements
-- dataset adapter hardening
-- evaluator and metric contracts
-- experiment and benchmark orchestration
-- documentation and tests
+- 配置体系与配置校验收敛
+- registry 与公共 API 收敛
+- dataset adapter 稳定性增强
+- evaluator 与 artifact 契约完善
+- experiment / benchmark 主干完善
+- 文档、测试与示例修正
 
-Lower priority during the current phase:
+当前优先级较低的方向：
 
-- large batches of model implementations without shared runtime support
-- broad refactors that rename everything at once
-- feature additions that bypass config or registry contracts
+- 在共享运行时未稳定前一次性补很多模型
+- 大范围重命名或无边界重构
+- 绕过配置、注册表或公共契约的功能扩展
 
-## Local Setup
+## 本地环境
 
 ```bash
 uv sync --extra dev
 ```
 
-Common commands:
+常用命令：
 
 ```bash
-uv run pytest -v
 uv run ruff check .
+uv run pytest -v
 uv run zensical build --strict --clean
 ```
 
-## Branch and PR Guidance
+说明：当前测试覆盖仍在逐步建设中，因此“测试通过”不代表所有路径都已经完备；请结合代码审查与文档一致性一起验证。
 
-For pull requests:
+## PR 建议
 
-1. explain the problem being solved
-2. describe the architectural impact
-3. list affected modules
-4. mention any tests added or reasons tests were not added
-5. note any follow-up work still needed
+一个好的 PR 最好回答下面几个问题：
 
-Recommended PR scopes:
+1. 解决了什么问题
+2. 修改了哪些契约或行为
+3. 影响了哪些模块或文档
+4. 如何验证
+5. 还存在哪些后续工作
 
-- one contract change
-- one runtime improvement
-- one dataset adapter improvement
-- one model sample integration
-- one documentation package
+推荐的 PR 粒度：
 
-## Model Contributions
+- 一个契约变更
+- 一个运行时主干增强
+- 一个数据适配器改进
+- 一个已接通的模型样板接入
+- 一组相互关联的文档修订
 
-When adding a model:
+## 模型贡献要求
 
-1. define its registry metadata clearly
-2. confirm the model fits an existing task contract
-3. document required input features
-4. document expected output fields
-5. add at least one focused test around shape, registration, or runtime compatibility
+新增模型时，请至少完成：
 
-Do not add a model that depends on ad hoc batch formats or special-case orchestration unless the shared contract is extended first.
+1. 明确定义注册表元信息
+2. 确认模型与现有任务契约兼容
+3. 说明所需输入特征
+4. 说明输出字段与评估方式
+5. 增加至少一条聚焦测试，覆盖注册、形状、或运行时兼容性
 
-## Documentation Contributions
+如果模型需要新的 batch 字段、评估协议或训练分支，应先扩展公共契约，再接入具体模型。
 
-Documentation is a first-class contribution area in this repository.
+## 文档贡献要求
 
-The docs site is sourced from `docs/` and built with Zensical. If you update developer-facing behavior, update the relevant documentation in the same pull request whenever possible.
+文档在本仓库中是一等公民。
 
-## Communication
+如果你修改了开发者可见行为，请尽量在同一个 PR 中同步更新：
 
-If you want to make a substantial architectural change, open an issue or draft PR first so the shared direction can be agreed before implementation expands.
+- `README.md`
+- `docs/` 中对应页面
+- 如有需要，更新示例命令、配置片段与产物说明
+
+文档必须遵守一个原则：只描述当前仓库真实存在的实现能力，并明确区分“已实现”“部分实现”“未实现”。
+
+## 当前特别需要注意的问题
+
+- `scripts/` 下的 CLI 入口仍是骨架，不要在文档或 PR 描述中把它们写成现成工具
+- 大多数模型家族文件仍未实现，不要把目录存在误写成模型已可运行
+- 可训练模型的 experiment 主路径尚未接通，相关说明必须准确
+
+## 沟通建议
+
+如果你计划做较大的架构调整，建议先开 issue 或 draft PR，对齐方向后再进入实现阶段。
