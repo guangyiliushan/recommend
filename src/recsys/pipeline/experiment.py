@@ -1,5 +1,11 @@
 """Single experiment orchestration — 原子执行单元。
 
+v2 新增：
+- 预测产物 Parquet 持久化（predictions.parquet）
+- 曲线数据落盘（roc_curve.json / pr_curve.json）
+- ExperimentRunMeta 增强运行时元数据
+- prediction_schema_version 追踪
+
 职责：
 - 接收一份 fully resolved experiment config
 - 编排 config → data → model → execution → prediction → evaluation → artifact 全流程
@@ -24,6 +30,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+import numpy as np
+import pandas as pd
 import yaml
 
 from recsys.core.base_dataset import BaseDataset
@@ -149,6 +157,53 @@ class ExperimentConfig:
 
 
 # ============================================================================
+# v2: 增强运行时元数据
+# ============================================================================
+
+@dataclass
+class ExperimentRunMeta:
+    """增强的运行时元数据，用于趋势和稳定性分析。
+
+    v2 新增，供 benchmark 跨 run 聚合使用。
+    """
+
+    run_id: str = ""
+    dataset_name: str = ""
+    model_name: str = ""
+    model_family: str = ""
+    task_type: str = ""
+    problem_type: str = ""
+    seed: int = 0
+
+    # 时间指标
+    started_at: str = ""
+    finished_at: str = ""
+    duration_seconds: float = 0.0
+
+    # 数据指标
+    num_users: int = 0
+    num_items: int = 0
+    train_samples: int = 0
+    test_samples: int = 0
+
+    # 模型指标
+    num_parameters: int = 0
+    supports_training: bool = False
+
+    # 结果指标
+    primary_metric: Optional[str] = None
+    primary_metric_value: Optional[float] = None
+    succeeded: bool = False
+
+    # 版本
+    schema_version: str = "2.0.0"
+    prediction_schema_version: str = "1.0.0"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+# ============================================================================
 # 辅助函数 —— run_id / hash
 # ============================================================================
 
@@ -254,6 +309,122 @@ def write_metrics_file(run_dir: Path, eval_result: EvaluationResult) -> None:
         json.dumps(eval_result.to_dict(), indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+
+
+def write_predictions_parquet(
+    run_dir: Path, bundle: PredictionBundle
+) -> Optional[str]:
+    """v2: 将 PredictionBundle 写入 predictions.parquet。
+
+    字段格式与 artifacts.md 中 predictions.parquet 契约一致。
+    若 bundle 数据无法展开为表格则跳过。
+    """
+    try:
+        rows: List[Dict[str, Any]] = []
+        task_type = bundle.task_type
+
+        if task_type == "multitask" and bundle.task_outputs and bundle.task_labels:
+            # 多任务：每任务一列
+            for task_name in bundle.task_outputs:
+                scores = bundle.task_outputs[task_name]
+                labels = bundle.task_labels.get(task_name, [])
+                masks = (
+                    bundle.task_masks.get(task_name, [])
+                    if bundle.task_masks
+                    else [True] * len(scores)
+                )
+                for i in range(len(scores)):
+                    rows.append({
+                        "task_name": task_name,
+                        "y_score": scores[i],
+                        "y_true": labels[i] if i < len(labels) else None,
+                        "y_mask": masks[i] if i < len(masks) else True,
+                        "split": "test",
+                    })
+        elif task_type == "ranking" and bundle.group_ids:
+            # ranking：每组一行
+            group_ids = bundle.group_ids
+            y_score = bundle.y_score
+            y_true = bundle.y_true
+            candidate_ids = bundle.candidate_ids
+            for i in range(len(group_ids)):
+                row: Dict[str, Any] = {
+                    "group_id": group_ids[i],
+                    "split": "test",
+                }
+                if isinstance(y_score[i], list):
+                    # 每个 group 内的候选项展平
+                    for j, s in enumerate(y_score[i]):
+                        row[f"score_{j}"] = s
+                    if y_true and isinstance(y_true[i], list):
+                        row["y_true_count"] = len(y_true[i])
+                else:
+                    row["y_score"] = y_score[i]
+                    row["y_true"] = y_true[i] if i < len(y_true) else None
+                if candidate_ids and i < len(candidate_ids):
+                    if isinstance(candidate_ids[i], list):
+                        row["num_candidates"] = len(candidate_ids[i])
+                rows.append(row)
+        else:
+            # pointwise：每样本一行
+            for i in range(len(bundle.y_score)):
+                row = {
+                    "sample_id": i,
+                    "y_score": bundle.y_score[i],
+                    "y_true": bundle.y_true[i] if i < len(bundle.y_true) else None,
+                    "split": "test",
+                }
+                if bundle.y_pred and i < len(bundle.y_pred):
+                    row["y_pred"] = bundle.y_pred[i]
+                if bundle.group_ids and i < len(bundle.group_ids):
+                    row["group_id"] = bundle.group_ids[i]
+                rows.append(row)
+
+        if not rows:
+            return None
+
+        df = pd.DataFrame(rows)
+        path = run_dir / "predictions.parquet"
+        df.to_parquet(path, index=False)
+        return str(path.resolve())
+    except Exception:
+        return None
+
+
+def write_curve_artifacts(
+    run_dir: Path, eval_result: EvaluationResult
+) -> Dict[str, str]:
+    """v2: 将曲线数据写入 curves/ 目录。
+
+    Returns
+    -------
+    Dict[str, str]
+        曲线文件路径字典。
+    """
+    curve_dir = run_dir / "curves"
+    curve_dir.mkdir(parents=True, exist_ok=True)
+    paths: Dict[str, str] = {}
+
+    for key, data in eval_result.curve_artifacts.items():
+        file_path = curve_dir / f"{key}.json"
+        try:
+            serialized: Any = data
+            if isinstance(data, dict):
+                serialized = {
+                    k: (v.tolist() if isinstance(v, np.ndarray) else v)
+                    for k, v in data.items()
+                }
+            elif isinstance(data, np.ndarray):
+                serialized = data.tolist()
+            (curve_dir / f"{key}.json").write_text(
+                json.dumps(serialized, indent=2, ensure_ascii=False, default=str),
+                encoding="utf-8",
+            )
+            paths[key] = str(file_path.resolve())
+        except Exception:
+            pass
+
+    return paths
 
 
 # ============================================================================
@@ -609,7 +780,15 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         # ---- 10. artifact 落盘 ----
         def _write_artifacts() -> None:
             write_metrics_file(run_dir, eval_result)
-            # 预测明细后续通过 predictions.parquet 支持
+            # v2: 预测 Parquet 持久化
+            pred_path = write_predictions_parquet(run_dir, bundle)
+            if pred_path:
+                result.artifact_paths["predictions"] = pred_path
+            # v2: 曲线数据落盘
+            curve_paths = write_curve_artifacts(run_dir, eval_result)
+            result.artifact_paths.update(
+                {f"curve_{k}": v for k, v in curve_paths.items()}
+            )
 
         _run_phase(ExperimentPhase.ARTIFACT, _write_artifacts)
 
@@ -622,6 +801,8 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         if primary_metric and primary_metric in eval_result.summary_metrics:
             primary_value = eval_result.summary_metrics[primary_metric]
 
+        finished_at = _utc_now_iso()
+
         write_status_file(
             run_dir,
             ExperimentStatus.SUCCEEDED,
@@ -632,23 +813,41 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             started_at=started_at,
             primary_metric=primary_metric,
             primary_metric_value=primary_value,
+            finished_at=finished_at,
         )
 
         result.status = ExperimentStatus.SUCCEEDED
         result.summary_metrics = eval_result.summary_metrics
         result.task_metrics = eval_result.task_metrics
-        result.artifact_paths = {
-            "config": str(run_dir / "config.yaml"),
-            "metrics": str(run_dir / "metrics.json"),
-            "status": str(run_dir / "status.json"),
-            "run_dir": str(run_dir),
-        }
+        result.artifact_paths["config"] = str(run_dir / "config.yaml")
+        result.artifact_paths["metrics"] = str(run_dir / "metrics.json")
+        result.artifact_paths["status"] = str(run_dir / "status.json")
+        result.artifact_paths["run_dir"] = str(run_dir)
         result.warnings = eval_result.warnings
+
+        # v2: 构建增强运行时元数据
+        duration = 0.0
+        try:
+            start_dt = datetime.fromisoformat(started_at)
+            end_dt = datetime.fromisoformat(finished_at)
+            duration = (end_dt - start_dt).total_seconds()
+        except Exception:
+            pass
+
         result.metadata.update({
-            "finished_at": _utc_now_iso(),
+            "finished_at": finished_at,
+            "duration_seconds": duration,
             "primary_metric": primary_metric,
             "primary_metric_value": primary_value,
             "num_samples": bundle.num_samples,
+            "num_users": dataset.num_users,
+            "num_items": dataset.num_items,
+            "model_family": model.model_family,
+            "task_type": model.task_type,
+            "problem_type": model.problem_type,
+            "supports_training": model.supports_training,
+            "schema_version": "2.0.0",
+            "prediction_schema_version": "1.0.0",
         })
 
         return result

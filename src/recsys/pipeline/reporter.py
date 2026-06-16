@@ -1,18 +1,25 @@
 """Results aggregation and report generation — 结构化结果聚合器。
 
+v2 新增：
+- 趋势分析 (trend.csv)：同一模型×数据集的指标随 seed 变化趋势
+- 稳定性视图 (stability.csv)：跨 seed 的 mean / std / cv 分析
+- 交互式 HTML（内联 JS 排序，无外部依赖）
+- Leaderboard 按 task_type 分组
+
 职责：
 - 消费 ExperimentResult 列表，生成 CSV/JSON/HTML 聚合产物
 - 对比表 (summary.csv)、排行榜 (leaderboard.csv)、失败列表 (failures.csv)
-- 基准索引 (manifest.json)、HTML 摘要页 (report.html)
+- 趋势表 (trend.csv)、稳定性表 (stability.csv)
+- 基准索引 (manifest.json)、交互式 HTML 摘要页 (report.html)
 
 边界：
 - 只消费 ExperimentResult，不接触 model / dataset / trainer 对象
-- CSV/JSON first，HTML second，图表 later（v2/v3）
+- CSV/JSON first，HTML second，图表 later（v3）
 - 可离线重建：所有输入来自结构化数据，不依赖运行时状态
 
 功能分层（与 development.md 对齐）：
 - v1: summary.csv, leaderboard.csv, failures.csv, manifest.json, report.html
-- v2: 主指标趋势、跨 seed 稳定性视图
+- v2: trend.csv, stability.csv, 交互式 HTML 排序
 - v3: ROC/PR 曲线引用、显著性检验、LaTeX table export
 """
 
@@ -20,14 +27,13 @@ from __future__ import annotations
 
 import csv
 import json
+import statistics
 from dataclasses import asdict, dataclass, field
-from dataclasses import fields as dc_fields
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Type, TypeVar
+from typing import Any, Dict, List, Optional, Sequence, TypeVar
 
 from recsys.pipeline.experiment import (
-    ExperimentError,
     ExperimentResult,
     ExperimentStatus,
 )
@@ -48,6 +54,9 @@ class ReporterConfig:
     generate_html: bool = True
     generate_leaderboard: bool = True
     generate_failures: bool = True
+    # v2
+    generate_trend: bool = True
+    generate_stability: bool = True
 
 
 @dataclass
@@ -99,23 +108,50 @@ class FailureRow:
     error_message: str
 
 
+# v2: 趋势与稳定性数据结构
+
+@dataclass
+class TrendRow:
+    """trend.csv 中的一行。
+
+    展示同一 model × dataset 组合下，各 seed 的指标变化趋势。
+    """
+
+    model: str
+    dataset: str
+    seed: int
+    task_type: str
+    primary_metric_name: str
+    primary_metric_value: Optional[float] = None
+    duration_seconds: Optional[float] = None
+    num_users: Optional[int] = None
+    num_items: Optional[int] = None
+
+
+@dataclass
+class StabilityRow:
+    """stability.csv 中的一行。
+
+    跨 seed 的指标稳定性分析（mean / std / cv）。
+    """
+
+    model: str
+    dataset: str
+    task_type: str
+    primary_metric_name: str
+    mean: float
+    std: float
+    cv: float  # coefficient of variation = std / |mean|
+    min_val: float
+    max_val: float
+    num_seeds: int
+
+
 # ============================================================================
 # 通用 CSV / JSON 写入
 # ============================================================================
 
 T = TypeVar("T")
-
-
-def _dataclass_to_row(obj: Any, fieldnames: List[str]) -> List[Any]:
-    """将 dataclass 实例转为 CSV 行列表。"""
-    d = asdict(obj)
-    # 展平 metrics 字典为独立列
-    metrics = d.pop("metrics", {})
-    row = [d.get(f, "") for f in fieldnames if f != "metrics"]
-    # 将 metrics 中的 key 作为额外列，value 作为对应值
-    for key, val in metrics.items():
-        row.append(val)
-    return row
 
 
 def _write_csv(
@@ -260,6 +296,82 @@ def aggregate_leaderboard(
     return rows
 
 
+# v2: 趋势与稳定性分析
+
+def extract_trend_rows(
+    results: List[ExperimentResult],
+    primary_metric: Optional[str] = None,
+) -> List[TrendRow]:
+    """从 ExperimentResult 列表提取趋势行。
+
+    仅保留 status=succeeded 的 run。
+    """
+    rows: List[TrendRow] = []
+    for r in results:
+        if r.status != ExperimentStatus.SUCCEEDED:
+            continue
+        meta = r.metadata
+        pm = primary_metric or meta.get("primary_metric")
+        pv: Optional[float] = None
+        if pm and pm in r.summary_metrics:
+            pv = r.summary_metrics[pm]
+
+        rows.append(TrendRow(
+            model=meta.get("model_name", ""),
+            dataset=meta.get("dataset_name", ""),
+            seed=meta.get("seed", 0),
+            task_type=meta.get("task_type", ""),
+            primary_metric_name=pm or "",
+            primary_metric_value=pv,
+            duration_seconds=meta.get("duration_seconds"),
+            num_users=meta.get("num_users"),
+            num_items=meta.get("num_items"),
+        ))
+
+    return rows
+
+
+def analyze_stability(
+    trend_rows: List[TrendRow],
+    primary_metric: Optional[str] = None,
+) -> List[StabilityRow]:
+    """从趋势行中计算跨 seed 稳定性指标。
+
+    按 model + dataset + task_type 分组。
+    至少需要 2 个 seed 才有意义。
+    """
+    # 按 model + dataset + task_type 分组
+    groups: Dict[tuple, List[TrendRow]] = {}
+    for row in trend_rows:
+        key = (row.model, row.dataset, row.task_type)
+        groups.setdefault(key, []).append(row)
+
+    rows: List[StabilityRow] = []
+    for (model, dataset, task_type), group in groups.items():
+        vals = [r.primary_metric_value for r in group if r.primary_metric_value is not None]
+        if len(vals) < 2:
+            continue
+        mean = statistics.mean(vals)
+        std = statistics.stdev(vals)
+        cv = abs(std / mean) if mean != 0 else float("inf")
+        rows.append(StabilityRow(
+            model=model,
+            dataset=dataset,
+            task_type=task_type,
+            primary_metric_name=group[0].primary_metric_name or (primary_metric or ""),
+            mean=mean,
+            std=std,
+            cv=cv,
+            min_val=min(vals),
+            max_val=max(vals),
+            num_seeds=len(vals),
+        ))
+
+    # 按 cv 升序（越稳定越靠前）
+    rows.sort(key=lambda r: r.cv)
+    return rows
+
+
 # ============================================================================
 # Reporter 主类
 # ============================================================================
@@ -310,6 +422,16 @@ class Reporter:
                 paths.get("leaderboard_csv"),
                 paths.get("failures_csv", ""),
             )
+
+        # v2: trend.csv
+        if self._config.generate_trend:
+            paths["trend_csv"] = self.generate_trend_csv(results)
+
+        # v2: stability.csv
+        if self._config.generate_stability:
+            stability_path = self.generate_stability_csv(results)
+            if stability_path:
+                paths["stability_csv"] = stability_path
 
         return paths
 
@@ -385,6 +507,48 @@ class Reporter:
             "phase", "error_code", "error_message",
         ]
         return _write_csv(path, rows, fieldnames)
+
+    # v2: 趋势与稳定性报告
+
+    def generate_trend_csv(
+        self,
+        results: List[ExperimentResult],
+    ) -> str:
+        """v2: 生成 trend.csv。
+
+        同一 model × dataset 组合下，各 seed 的指标变化趋势。
+        包含 duration_seconds / num_users / num_items 等辅助列。
+        """
+        trend_rows = extract_trend_rows(results, self._config.primary_metric or None)
+        path = self._output_dir / "trend.csv"
+        fieldnames = [
+            "model", "dataset", "seed", "task_type",
+            "primary_metric_name", "primary_metric_value",
+            "duration_seconds", "num_users", "num_items",
+        ]
+        return _write_csv(path, trend_rows, fieldnames)
+
+    def generate_stability_csv(
+        self,
+        results: List[ExperimentResult],
+    ) -> Optional[str]:
+        """v2: 生成 stability.csv。
+
+        跨 seed 的指标稳定性分析（mean / std / cv）。
+        若 seed 数不足 2 则返回 None。
+        """
+        trend_rows = extract_trend_rows(results, self._config.primary_metric or None)
+        stability_rows = analyze_stability(trend_rows, self._config.primary_metric or None)
+
+        if not stability_rows:
+            return None
+
+        path = self._output_dir / "stability.csv"
+        fieldnames = [
+            "model", "dataset", "task_type", "primary_metric_name",
+            "mean", "std", "cv", "min_val", "max_val", "num_seeds",
+        ]
+        return _write_csv(path, stability_rows, fieldnames)
 
     def generate_manifest(
         self,
@@ -464,13 +628,17 @@ def _read_csv_as_dicts(path: str) -> List[Dict[str, str]]:
 def _build_html_table(
     rows: List[Dict[str, str]],
     caption: str,
+    table_id: str = "",
 ) -> str:
-    """构建 HTML 表格。"""
+    """v2: 构建可排序 HTML 表格。"""
     if not rows:
         return f"<p>No data for {caption}.</p>"
 
     columns = list(rows[0].keys())
-    header = "".join(f"<th>{c}</th>" for c in columns)
+    header = "".join(
+        f'<th onclick="sortTable(\'{table_id}\', {i})" style="cursor:pointer">&#9650;&#9660; {c}</th>'
+        for i, c in enumerate(columns)
+    )
     body_rows = ""
     for row in rows:
         cells = "".join(
@@ -480,7 +648,7 @@ def _build_html_table(
 
     return f"""
     <h3>{caption}</h3>
-    <table>
+    <table id="{table_id}">
         <thead><tr>{header}</tr></thead>
         <tbody>{body_rows}</tbody>
     </table>
@@ -499,13 +667,17 @@ def _build_html(
     """构建完整 HTML 报告。"""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
-    summary_section = _build_html_table(summary_rows, "Summary")
-    leaderboard_section = _build_html_table(
-        leaderboard_rows, "Leaderboard"
-    ) if leaderboard_rows else "<p>No leaderboard data.</p>"
-    failures_section = _build_html_table(
-        failure_rows, "Failures"
-    ) if failure_rows else "<p>No failures.</p>"
+    summary_section = _build_html_table(summary_rows, "Summary", "summary-table")
+    leaderboard_section = (
+        _build_html_table(leaderboard_rows, "Leaderboard", "leaderboard-table")
+        if leaderboard_rows
+        else "<p>No leaderboard data.</p>"
+    )
+    failures_section = (
+        _build_html_table(failure_rows, "Failures", "failures-table")
+        if failure_rows
+        else "<p>No failures.</p>"
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -521,7 +693,8 @@ def _build_html(
         table {{ width: 100%; border-collapse: collapse; margin: 12px 0 24px; background: white;
                  box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
         th, td {{ padding: 8px 12px; text-align: left; border-bottom: 1px solid #dee2e6; font-size: 14px; }}
-        th {{ background: #e9ecef; font-weight: 600; }}
+        th {{ background: #e9ecef; font-weight: 600; user-select: none; }}
+        th:hover {{ background: #dee2e6; }}
         tr:hover {{ background: #f1f3f5; }}
         .summary-cards {{ display: flex; gap: 16px; margin: 16px 0; }}
         .card {{ background: white; border-radius: 8px; padding: 16px 24px;
@@ -532,6 +705,25 @@ def _build_html(
         .failure {{ color: #dc3545; }}
         .timestamp {{ color: #6c757d; font-size: 14px; }}
     </style>
+    <script>
+    function sortTable(tableId, colIdx) {{
+        var table = document.getElementById(tableId);
+        var tbody = table.tBodies[0];
+        var rows = Array.from(tbody.rows);
+        var ascending = table.getAttribute("data-sort-col") !== String(colIdx);
+        table.setAttribute("data-sort-col", ascending ? colIdx : -1);
+        rows.sort(function(a, b) {{
+            var av = a.cells[colIdx].textContent.trim();
+            var bv = b.cells[colIdx].textContent.trim();
+            var an = parseFloat(av), bn = parseFloat(bv);
+            if (!isNaN(an) && !isNaN(bn)) {{ av = an; bv = bn; }}
+            if (av < bv) return ascending ? -1 : 1;
+            if (av > bv) return ascending ? 1 : -1;
+            return 0;
+        }});
+        rows.forEach(function(r) {{ tbody.appendChild(r); }});
+    }}
+    </script>
 </head>
 <body>
     <h1>{benchmark_name} — Benchmark Report</h1>

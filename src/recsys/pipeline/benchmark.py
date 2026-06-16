@@ -1,20 +1,27 @@
 """Benchmark runner — 矩阵展开、调度与恢复。
 
+v2 新增：
+- 受控并发：max_concurrent_runs 控制并行度（默认 1，串行）
+- tqdm 进度条
+- 每个 run 写入独立的 run.log
+
 职责：
 - 将 benchmark 矩阵配置展开为多个 fully resolved experiment config
 - 按恢复策略生成 RunPlan，决定各 run 的跳过/执行/重试
-- 串行调用 run_experiment()，失败隔离
+- 串行或受控并发调用 run_experiment()，失败隔离
 - 收集结果后委托 Reporter 生成聚合产物
 
 边界：
 - 不直接接触 core 模块，只通过 experiment 间接消费
 - 不实现训练、评估、指标逻辑
-- 不管理并发（v1 串行，v2 再加受控并发）
+- 并发粒度在 experiment 级别（每个 run 一个执行单元）
 """
 
 from __future__ import annotations
 
 import json
+import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -23,6 +30,8 @@ from typing import Any, Dict, List, Optional
 
 from recsys.pipeline.experiment import (
     ExperimentConfig,
+    ExperimentError,
+    ExperimentPhase,
     ExperimentResult,
     ExperimentStatus,
     generate_run_id,
@@ -32,6 +41,8 @@ from recsys.pipeline.reporter import (
     Reporter,
     ReporterConfig,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -80,6 +91,9 @@ class BenchmarkConfig:
 
     # 恢复策略
     resume_mode: ResumeMode = ResumeMode.SUCCESSFUL_SKIP
+
+    # v2: 并发控制（默认 1 = 串行）
+    max_concurrent_runs: int = 1
 
     # 输出
     output_root: str = "./outputs"
@@ -330,10 +344,89 @@ def collect_skipped_result(run_id: str, config: ExperimentConfig) -> ExperimentR
 # 执行循环
 # ============================================================================
 
+def _try_import_tqdm():
+    """尝试导入 tqdm，不可用时返回空包装器。"""
+    try:
+        from tqdm import tqdm as _tqdm
+        return _tqdm
+    except ImportError:
+        return lambda it, **kw: it
+
+
+def _execute_one(plan: RunPlan, idx: int, total: int) -> ExperimentResult:
+    """执行单个 run plan（供并发调度器消费）。"""
+    if plan.should_skip:
+        return collect_skipped_result(plan.run_id, plan.config)
+
+    try:
+        result = run_experiment(plan.config)
+    except Exception:
+        from recsys.pipeline.experiment import ExperimentError as _ExpErr
+        from recsys.pipeline.experiment import ExperimentPhase as _ExpPhase
+        result = ExperimentResult(
+            run_id=plan.run_id,
+            status=ExperimentStatus.FAILED,
+            error=_ExpErr(
+                code="BENCHMARK_EXECUTION_ERROR",
+                phase=_ExpPhase.TRAINING,
+                message="run_experiment raised unhandled exception",
+            ),
+            metadata={
+                "dataset_name": plan.config.dataset_name,
+                "model_name": plan.config.model_name,
+                "seed": plan.config.seed,
+            },
+        )
+
+    return result
+
+
+def execute_runs_parallel(
+    plans: List[RunPlan],
+    max_workers: int,
+) -> List[ExperimentResult]:
+    """v2: 受控并发执行所有 run plans。
+
+    使用 ThreadPoolExecutor，每个 run 一个 future。
+    失败隔离：单个 run 失败不阻塞其他。
+    """
+    results: List[ExperimentResult] = []
+    total = len(plans)
+    tqdm = _try_import_tqdm()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_execute_one, plan, i, total): (i, plan)
+            for i, plan in enumerate(plans)
+        }
+
+        with tqdm(total=total, desc="Benchmark", unit="run") as pbar:
+            for future in as_completed(futures):
+                i, plan = futures[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    result = ExperimentResult(
+                        run_id=plan.run_id,
+                        status=ExperimentStatus.FAILED,
+                        metadata={
+                            "dataset_name": plan.config.dataset_name,
+                            "model_name": plan.config.model_name,
+                            "seed": plan.config.seed,
+                        },
+                    )
+                results.append((i, result))
+                pbar.update(1)
+
+    # 按原始顺序排序
+    results.sort(key=lambda x: x[0])
+    return [r for _, r in results]
+
+
 def execute_runs(
     plans: List[RunPlan],
 ) -> List[ExperimentResult]:
-    """串行执行所有 run plans。
+    """串行执行所有 run plans（v1 兼容，保留）。
 
     每个 plan：
     - 若 should_skip，从已有 artifact 重建结果
@@ -341,35 +434,11 @@ def execute_runs(
     - 失败时记录结构化错误，继续下一个
     """
     results: List[ExperimentResult] = []
+    total = len(plans)
+    tqdm = _try_import_tqdm()
 
-    for i, plan in enumerate(plans):
-        if plan.should_skip:
-            result = collect_skipped_result(plan.run_id, plan.config)
-            results.append(result)
-            continue
-
-        # 执行
-        try:
-            result = run_experiment(plan.config)
-        except Exception:
-            # 极端兜底：run_experiment 内部已经捕获并写入 status，
-            # 这里再兜一层防止任何未捕获异常中断整批
-            from recsys.pipeline.experiment import ExperimentError, ExperimentPhase
-            result = ExperimentResult(
-                run_id=plan.run_id,
-                status=ExperimentStatus.FAILED,
-                error=ExperimentError(
-                    code="BENCHMARK_EXECUTION_ERROR",
-                    phase=ExperimentPhase.TRAINING,
-                    message="run_experiment raised unhandled exception",
-                ),
-                metadata={
-                    "dataset_name": plan.config.dataset_name,
-                    "model_name": plan.config.model_name,
-                    "seed": plan.config.seed,
-                },
-            )
-
+    for i, plan in enumerate(tqdm(plans, desc="Benchmark", unit="run")):
+        result = _execute_one(plan, i, total)
         results.append(result)
 
     return results
@@ -415,7 +484,10 @@ def run_benchmark(bench_cfg: BenchmarkConfig) -> BenchmarkResult:
     bench_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- 4. 执行 ----
-    results = execute_runs(plans)
+    if bench_cfg.max_concurrent_runs > 1:
+        results = execute_runs_parallel(plans, bench_cfg.max_concurrent_runs)
+    else:
+        results = execute_runs(plans)
 
     # ---- 5. 汇总状态 ----
     succeeded = sum(1 for r in results if r.status in (
