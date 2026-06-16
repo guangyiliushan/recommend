@@ -533,18 +533,54 @@ def _execute_trainable_path(
     dataset: BaseDataset,
     config: ExperimentConfig,
 ) -> PredictionBundle:
-    """可训练模型路径（预留接口）。
+    """训练式模型路径：dataloader → LightningRecommender → Trainer.fit → predict → Bundle.
 
-    未来流程：
-        1. 包装为 LightningRecommender
-        2. 构造 Trainer(callbacks / loggers)
-        3. fit(train_loader, val_loader)
-        4. 产出 PredictionBundle
+    流程：
+        1. 通过 BaseDataset.get_dataloader() 获取 train / val / test DataLoader
+        2. 通过 create_trainer() 包装 NeuralRecommender → LightningRecommender
+        3. trainer.fit(train_loader, val_loader)
+        4. trainer.predict(test_loader) 收集各 batch 预测结果
+        5. _assemble_bundle_from_predictions() 汇总为 PredictionBundle
     """
-    raise NotImplementedError(
-        "trainable 路径尚未实现。"
-        "请等待 trainer.py (LightningRecommender + TrainerFactory) 完成后接入。"
+    from recsys.training.trainer import create_trainer
+
+    train_cfg = config.training_config
+    eval_cfg = config.evaluation_config
+
+    # 1. 构建 DataLoader
+    batch_size = train_cfg.get("batch_size", 256)
+    num_workers = train_cfg.get("num_workers", 4)
+
+    train_loader = dataset.get_dataloader(
+        "train", batch_size=batch_size, num_workers=num_workers, shuffle=True,
     )
+    val_loader = dataset.get_dataloader(
+        "val", batch_size=batch_size, num_workers=num_workers, shuffle=False,
+    )
+    test_loader = dataset.get_dataloader(
+        "test", batch_size=batch_size, num_workers=num_workers, shuffle=False,
+    )
+
+    # 2. 创建 trainer + LightningRecommender
+    run_dir = Path(config.output_dir) / generate_run_id(config)
+    primary_metric = eval_cfg.get("primary_metric", "val/loss")
+    trainer, lit_model = create_trainer(
+        model=model,
+        training_config=train_cfg,
+        runtime_config=config.runtime_config,
+        run_dir=run_dir,
+        monitor_metric=primary_metric,
+    )
+
+    # 3. 训练
+    trainer.fit(lit_model, train_loader, val_loader)
+
+    # 4. 预测
+    predictions = trainer.predict(lit_model, test_loader)
+    # predictions 是 List[Dict]，来自 LightningRecommender.predict_step
+
+    # 5. 组装 PredictionBundle
+    return _assemble_bundle_from_predictions(predictions, model, config)
 
 
 def _execute_nontrainable_path(
@@ -577,6 +613,78 @@ def _execute_nontrainable_path(
     return model.predict(
         user_train_items=train_mapping,
         user_test_items=test_mapping,
+    )
+
+
+def _assemble_bundle_from_predictions(
+    predictions: List[Dict[str, Any]],
+    model: BaseRecommender,
+    config: ExperimentConfig,
+) -> PredictionBundle:
+    """将 LightningRecommender.predict_step 输出聚合为 PredictionBundle.
+
+    predict_step 返回的每个 dict 至少包含 ``scores`` 和 ``labels``，
+    可选包含 ``group_ids``、``candidate_ids``、``task_outputs``。
+    """
+    import numpy as np
+
+    all_scores = []
+    all_labels = []
+    all_group_ids = []
+    all_candidate_ids = []
+    all_task_outputs: Dict[str, List[Any]] = {}
+
+    for batch_pred in predictions:
+        scores = batch_pred.get("scores")
+        labels = batch_pred.get("labels")
+        group_ids = batch_pred.get("group_ids")
+        candidate_ids = batch_pred.get("candidate_ids")
+        task_outputs = batch_pred.get("task_outputs")
+
+        if scores is not None:
+            s = scores.detach().cpu().numpy() if hasattr(scores, "detach") else np.asarray(scores)
+            all_scores.extend(s.flatten().tolist() if s.ndim > 1 else s.tolist())
+        if labels is not None:
+            lbl_arr = labels.detach().cpu().numpy() if hasattr(labels, "detach") else np.asarray(labels)
+            all_labels.extend(lbl_arr.flatten().tolist() if lbl_arr.ndim > 1 else lbl_arr.tolist())
+        if group_ids is not None:
+            gid_arr = group_ids.detach().cpu().numpy() if hasattr(group_ids, "detach") else np.asarray(group_ids)
+            all_group_ids.extend(gid_arr.flatten().tolist() if gid_arr.ndim > 1 else gid_arr.tolist())
+        if candidate_ids is not None:
+            cid_arr = candidate_ids.detach().cpu().numpy() if hasattr(candidate_ids, "detach") else np.asarray(candidate_ids)
+            all_candidate_ids.extend(cid_arr.flatten().tolist() if cid_arr.ndim > 1 else cid_arr.tolist())
+        if task_outputs is not None:
+            for task_name, task_val in task_outputs.items():
+                tv = task_val.detach().cpu().numpy() if hasattr(task_val, "detach") else np.asarray(task_val)
+                all_task_outputs.setdefault(task_name, []).extend(
+                    tv.flatten().tolist() if tv.ndim > 1 else tv.tolist()
+                )
+
+    model_meta = model.get_model_metadata() if hasattr(model, "get_model_metadata") else {}
+    task_type = model_meta.get("task_type", "pointwise")
+    problem_type = model_meta.get("problem_type", "binary")
+    score_type = "raw_score"
+
+    # 推断 task_type：有 group_ids 时为 ranking
+    if all_group_ids and task_type == "pointwise":
+        task_type = "ranking"
+
+    return PredictionBundle(
+        task_type=task_type,
+        problem_type=problem_type,
+        y_true=all_labels,
+        y_score=all_scores,
+        group_ids=all_group_ids if all_group_ids else None,
+        candidate_ids=all_candidate_ids if all_candidate_ids else None,
+        task_outputs=all_task_outputs if all_task_outputs else None,
+        task_labels=None,
+        score_type=score_type,
+        metadata={
+            "dataset_name": config.dataset_name,
+            "model_name": config.model_name,
+            "seed": config.seed,
+            "num_samples": len(all_scores),
+        },
     )
 
 

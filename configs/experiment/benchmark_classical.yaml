@@ -1,5 +1,10 @@
 # Benchmark: Classical Era (2001–2015)
 # 当前仅 itemcf 已实现，其余经典模型仍为占位
+# 当前可运行配置：itemcf (非训练) + dssm (训练)
+# 数据集：taac2026_data_sample (唯一已注册且可用)
+#
+# 用法:
+#   python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
 
 experiment:
   name: "benchmark_classical"
@@ -13,8 +18,5 @@ datasets:
 models:
   - name: "itemcf"
     family: "classical"
-    params:
-      similarity: cosine
-      top_k_neighbors: 50
-      recommend_k: 10
-      normalize: true
+  - name: "dssm"
+    family: "classical"

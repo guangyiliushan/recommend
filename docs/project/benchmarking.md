@@ -253,10 +253,10 @@ print(result.report_path)
 
 文档必须明确保留下面这些限制：
 
-- `run_benchmark()` 依赖 `run_experiment()`，而后者的训练型路径尚未完成
+- `run_benchmark()` 依赖 `run_experiment()`，后者已同时支持训练型和非训练型路径
 - benchmark 预设名当前只是被写入运行配置，还没有形成完整的统一配置解析体系
-- 当前仓库中的部分 `configs/experiment/*.yaml` 仍引用了未实现模型或未注册数据集，不能直接当作“现成可运行配置”宣传
-- `scripts/run_benchmark.py` 仍是占位脚本，不应作为稳定 CLI 入口写入文档
+- 当前仓库中 `configs/experiment/` 下的 benchmark yaml 已清理为仅引用已注册模型和数据集，不可运行的家族预设已转为预留模板
+- `scripts/run_benchmark.py` 已实现为可用 CLI 入口
 
 ## 当前最重要的结论
 

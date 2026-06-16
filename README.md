@@ -10,16 +10,15 @@ RecBench 是一个推荐系统 Benchmark 与工程框架项目，目标是在统
 - `src/recsys/utils`：结构化配置、设备探测、日志、可复现性、profiling
 - `src/recsys/training`：Lightning 训练封装、callbacks、loss、optimizer、scheduler、分布式策略解析
 - `src/recsys/evaluation`：pointwise、ranking、multitask 评估与曲线导出
-- `src/recsys/pipeline`：单实验主干、批量 Benchmark 调度、聚合报告
-- `src/recsys/models/classical/item_based_cf.py`：当前最成熟的经典基线 `itemcf`
+- `src/recsys/pipeline`：单实验主干（含训练型路径）、批量 Benchmark 调度、聚合报告
+- `src/recsys/models/classical/`：`itemcf`（非训练排序基线）+ `dssm`（双塔神经网络，首个可训练模型）
 - `docs/`：与当前仓库实现对齐的技术文档
+- `scripts/run_single.py`、`scripts/run_benchmark.py`：可用的 CLI 入口
 
 当前仍需明确的限制包括：
 
-- 可训练模型尚未接通 `run_experiment()` 的训练型主路径
-- 当前真正可用于最小闭环的模型主要是 `itemcf`
-- 多数模型家族文件仍是目录预留或占位实现
-- `scripts/` 下 CLI 入口仍是骨架，不应视为现成可执行工具
+- 除 `itemcf` 和 `dssm` 外，多数模型家族文件仍是占位实现
+- `scripts/run_ablation.py`、`scripts/download_data.py` 等辅助脚本仍待完善
 
 换句话说，RecBench 目前已经具备“共享运行时主干 + 最小可运行基线”的基础，但还不是“全模型全部完工”的成品 Benchmark 套件。
 
@@ -35,9 +34,9 @@ RecBench 是一个推荐系统 Benchmark 与工程框架项目，目标是在统
 当前代码仓库中，最清晰的可运行路径是：
 
 1. 使用已注册的数据集适配器加载数据
-2. 通过模型注册表实例化 `itemcf`
-3. 走 `run_experiment()` 的非训练式路径执行 `fit/predict`
-4. 通过 `evaluate()` 生成 ranking 指标
+2. 通过模型注册表实例化 `itemcf`（非训练）或 `dssm`（训练）
+3. 走 `run_experiment()` 的非训练式或训练式路径
+4. 通过 `evaluate()` 生成指标
 5. 落盘 `config.yaml`、`status.json`、`metrics.json`、`predictions.parquet` 与 `curves/`
 6. 通过 `run_benchmark()` 与 `Reporter` 聚合多次实验结果
 
@@ -47,7 +46,7 @@ RecBench 是一个推荐系统 Benchmark 与工程框架项目，目标是在统
 .
 |-- configs/                  # 配置与实验矩阵
 |-- docs/                     # 文档站源码
-|-- scripts/                  # 计划中的 CLI 入口骨架
+|-- scripts/                  # CLI 实验入口（run_single / run_benchmark）
 |-- src/recsys/
 |   |-- core/                 # 注册表、基础契约、PredictionBundle
 |   |-- data/                 # Dataset adapter 与数据注册
@@ -100,8 +99,16 @@ from recsys import auto_discover_models, get_model, list_models
 auto_discover_models()
 print(list_models())
 
+# 非训练模型
 ItemCF = get_model("itemcf")
 model = ItemCF(similarity="cosine", top_k_neighbors=50, recommend_k=10)
+
+# 训练模型（DSSM 双塔神经网络）
+DSSM = get_model("dssm")
+model = DSSM(
+    config={"embed_dim": 64, "hidden_dims": [128, 64]},
+    schema_metadata={"num_users": 10000, "num_items": 5000},
+)
 ```
 
 ### 单实验运行
@@ -149,6 +156,19 @@ bench_result = run_benchmark(bench_cfg)
 print(bench_result.status)
 print(bench_result.summary_path)
 print(bench_result.report_path)
+```
+
+### 命令行入口
+
+```bash
+# 单实验（非训练模型）
+uv run python scripts/run_single.py --model itemcf --dataset taac2026_data_sample --seed 42
+
+# 单实验（训练模型 DSSM）
+uv run python scripts/run_single.py --model dssm --dataset taac2026_data_sample --seed 42 --epochs 10 --lr 3e-4
+
+# 批量 Benchmark
+uv run python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
 ```
 
 ## 文档入口

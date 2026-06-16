@@ -59,10 +59,9 @@ RecBench 的目录结构需要同时服务于：
 
 ### `scripts/`
 
-- 当前用于承载计划中的 CLI 入口
-- 现阶段仍以骨架文件为主
-
-因此文档中应把它描述为“脚本入口预留目录”，而不是已经稳定可用的命令行层。
+- 当前用于承载 CLI 实验入口
+- `run_single.py` / `run_benchmark.py` 已实现为基础可用入口
+- 其他脚本（`run_ablation.py`、`download_data.py` 等）为引导提示
 
 ### `src/recsys/`
 

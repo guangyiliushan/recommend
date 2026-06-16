@@ -360,13 +360,14 @@ Reporter(config).generate(results)
 
 ## CLI 边界
 
-`scripts/run_single.py`、`scripts/run_benchmark.py`、`scripts/generate_report.py` 当前仍是占位骨架。
+`scripts/run_single.py` 和 `scripts/run_benchmark.py` 当前已实现为基础可用的 CLI 入口。
+`scripts/generate_report.py`、`scripts/run_ablation.py`、`scripts/download_data.py` 仍为引导提示脚本。
 
 因此：
 
-- 文档不应把它们写成稳定 CLI
-- 示例不应宣传“直接可运行”的命令行工作流
-- 当前更适合推荐 Python API 调用方式
+- 文档不应把它们写成生产级 CLI
+- 示例可以给出 `run_single.py` / `run_benchmark.py` 的命令行用法
+- 当前更适合推荐 Python API 调用方式作为主要交互途径
 
 ## 返回格式原则
 

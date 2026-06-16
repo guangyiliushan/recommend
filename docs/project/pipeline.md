@@ -71,9 +71,15 @@ RecBench 并不假设所有模型都要走梯度训练。
 
 ### 训练路径
 
-当前训练路径仍未完成接线，代码会直接抛出 `NotImplementedError`。
+当前训练路径已经实现接线，会：
 
-因此，training 模块虽然已经具备 `LightningRecommender`、`TrainerFactory` 等基础设施，但 experiment 主流程还没有把训练型模型真正接通。
+- 通过 `dataset.get_dataloader()` 构建 train/val/test DataLoader
+- 调用 `create_trainer()` 将 NeuralRecommender 包装为 LightningRecommender
+- 执行 `trainer.fit()` 训练 + `trainer.predict()` 预测
+- 通过 `_assemble_bundle_from_predictions()` 将各 batch 预测汇总为 `PredictionBundle`
+
+训练路径要求模型继承 `NeuralRecommender` 并实现 `forward()` 和 `compute_loss()`。
+当前首个可训练模型样例为 `dssm`。
 
 ## 统一预测产物
 
@@ -216,11 +222,10 @@ print(result.artifact_paths)
 
 当前文档必须显式保留下面这些限制：
 
-- 可训练路径尚未接通
-- 当前真正清晰可运行的模型主要是 `itemcf`
-- CLI 入口仍未完成
+- 当前真正清晰可运行的训练型模型主要是 `dssm`
+- `checkpoints/` 已是训练路径的常规产物，但尚未在所有模型上验证
 - benchmark 预设与 experiment 预设的完整解析能力尚未全部打通
 
 ## 当前最重要的结论
 
-RecBench 的 pipeline 当前已经具备“单实验主干 + 标准预测产物 + 结构化 artifact”的核心能力。文档应把它写成“已实现的基础运行时”，同时明确可训练模型路径仍是当前最主要的未完成项。
+RecBench 的 pipeline 当前已经具备"单实验主干（含训练型路径）+ 标准预测产物 + 结构化 artifact"的核心能力。文档应把它写成"已实现的基础运行时"，同时明确训练型模型覆盖范围仍是当前最基本的扩展方向。

@@ -102,11 +102,52 @@ result = run_experiment(cfg)
 print(result.status)
 ```
 
+### 训练型模型入口
+
+```python
+from recsys.pipeline.experiment import ExperimentConfig, run_experiment
+
+cfg = ExperimentConfig(
+    experiment_name="demo_dssm",
+    dataset_name="taac2026_data_sample",
+    model_name="dssm",
+    seed=42,
+    output_dir="./outputs/experiments",
+    data_config={"root_dir": "./data"},
+    model_config={
+        "params": {"embed_dim": 64, "hidden_dims": [128, 64]},
+    },
+    training_config={
+        "epochs": 10,
+        "batch_size": 256,
+        "learning_rate": 1e-3,
+    },
+    evaluation_config={
+        "metrics": ["roc_auc", "log_loss"],
+    },
+)
+
+result = run_experiment(cfg)
+print(result.status)
+```
+
+### CLI 入口
+
+```bash
+# 非训练模型
+uv run python scripts/run_single.py --model itemcf --dataset taac2026_data_sample --seed 42
+
+# 训练模型
+uv run python scripts/run_single.py --model dssm --dataset taac2026_data_sample --seed 42 --epochs 10 --lr 3e-4
+
+# 批量 Benchmark
+uv run python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
+```
+
 ## 当前需要特别注意的现实边界
 
-- `scripts/` 下 CLI 入口仍是骨架，不建议把它们当现成命令使用
-- 大多数模型目录文件仍是占位，当前最清晰可运行的模型主要是 `itemcf`
-- 训练型模型路径尚未在 experiment 主流程中接通
+- 大多数模型目录文件仍是占位，当前最清晰可运行的模型是 `itemcf`（非训练）和 `dssm`（训练）
+- `scripts/run_ablation.py`、`scripts/download_data.py` 等辅助脚本仍待完善
 
 ## 仓库重要目录
 

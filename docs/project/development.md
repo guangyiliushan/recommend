@@ -21,8 +21,8 @@ description: 当前仓库的开发优先级、提交流程与一致性要求
 2. registry 与模型/数据发现
 3. dataset adapter 稳定性
 4. `PredictionBundle` 与 evaluator 契约
-5. 单实验 pipeline
-6. 训练型 experiment 路径接线
+5. 单实验 pipeline（含训练型路径）
+6. 训练型模型样板（`dssm` 已完成）
 7. Benchmark 聚合与恢复细化
 8. 再逐步扩展模型覆盖
 
@@ -32,9 +32,9 @@ description: 当前仓库的开发优先级、提交流程与一致性要求
 
 优先级较高的方向包括：
 
-- 接通训练型模型的 experiment 主路径
+- 扩展第二个训练型模型样板（如 sequence 家族的模型）
 - 统一配置示例与真实代码字段
-- 为 `itemcf` 和公共契约补充测试
+- 为 `itemcf`、`dssm` 和公共契约补充测试
 - 继续修正文档、脚本与配置中的过时引用
 - 收敛数据适配器与评估层的字段约定
 
@@ -69,7 +69,6 @@ uv run zensical build --strict --clean
 - 包路径应统一围绕 `recsys`，不要残留旧入口
 - 配置中的模型名与数据集名必须真实存在并可注册
 - README、`docs/`、`configs/` 与代码状态必须一致
-- `scripts/` 仍是骨架，不能在文档中写成稳定 CLI
 - 目录预留不等于功能已实现
 
 ## PR 建议
