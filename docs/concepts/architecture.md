@@ -117,7 +117,7 @@ pipeline 层负责运行时编排：
 
 当前必须明确写清楚的边界有：
 
-- 当前可运行模型主要为 `itemcf`（非训练 + ranking）和 `dssm`（训练 + pointwise）
+- 当前可运行模型主要为 `itemcf`（非训练 + ranking）和 `hyformer`（训练 + pointwise）
 - 模型家族目录已齐全，但实际可运行模型仍很少
 - `scripts/run_ablation.py`、`scripts/download_data.py` 等辅助脚本仍待完善
 

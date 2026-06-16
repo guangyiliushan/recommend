@@ -939,6 +939,41 @@ class NeuralRecommender(BaseRecommender, torch.nn.Module):
             f"{self.__class__.__name__} 必须实现 compute_loss(batch, output) -> Dict[str, Tensor]"
         )
 
+    def get_sparse_params(self) -> List[torch.nn.Parameter]:
+        """返回稀疏参数列表（用于 Adagrad）。
+
+        子类可覆盖此方法实现稀疏/密集参数分离。
+        默认返回空列表（无稀疏参数）。
+
+        稀疏参数通常包括：
+        - Embedding 层权重
+        - 高基数特征对应的参数
+
+        Returns
+        -------
+        List[nn.Parameter]
+            稀疏参数列表。
+        """
+        return []
+
+    def get_dense_params(self) -> List[torch.nn.Parameter]:
+        """返回密集参数列表（用于 AdamW）。
+
+        子类可覆盖此方法实现稀疏/密集参数分离。
+        默认返回所有参数。
+
+        密集参数通常包括：
+        - MLP 层权重
+        - Attention 层权重
+        - 其他非 Embedding 参数
+
+        Returns
+        -------
+        List[nn.Parameter]
+            密集参数列表。
+        """
+        return list(self.parameters())
+
     def predict(self, batch: Batch, **kwargs: Any) -> PredictionBundle:
         """预测并返回 PredictionBundle。
 

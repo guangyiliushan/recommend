@@ -313,6 +313,51 @@ class FocalLoss(nn.Module):
         return loss
 
 
+def sigmoid_focal_loss(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    alpha: float = 0.25,
+    gamma: float = 2.0,
+    reduction: str = "mean",
+) -> torch.Tensor:
+    """Sigmoid Focal Loss — 函数式版本，直接接受 logits。
+
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+
+    设计来源：dist/utils.py 的 sigmoid_focal_loss。
+
+    Parameters
+    ----------
+    logits : torch.Tensor
+        原始 logits（sigmoid 前），shape (N,)。
+    targets : torch.Tensor
+        二分类标签 {0, 1}，shape (N,)。
+    alpha : float
+        正类权重，范围 (0, 1)。当正样本占主导时，使用 alpha < 0.5 降低正类权重。
+    gamma : float
+        聚焦参数。gamma=0 退化为标准 BCE；gamma=2 是常用值。
+    reduction : str
+        归约方式：'mean' | 'sum' | 'none'。
+
+    Returns
+    -------
+    torch.Tensor
+        损失值。
+    """
+    p = torch.sigmoid(logits)
+    bce_loss = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
+    p_t = p * targets + (1 - p) * (1 - targets)
+    focal_weight = (1 - p_t) ** gamma
+    alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+    loss = alpha_t * focal_weight * bce_loss
+
+    if reduction == "mean":
+        return loss.mean()
+    elif reduction == "sum":
+        return loss.sum()
+    return loss
+
+
 class MultiTaskLoss(nn.Module):
     """Multi-task weighted loss — 多任务加权损失。
 

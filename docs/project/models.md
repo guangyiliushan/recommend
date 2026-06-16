@@ -89,7 +89,7 @@ model = ItemCF(similarity="cosine", top_k_neighbors=50, recommend_k=10)
 当前已实现并可通过训练型路径或非训练路径运行的模型是：
 
 - `itemcf` — 非训练式协同过滤基线
-- `dssm` — 双塔神经网络，首个可训练模型
+- `hyformer` — 双塔神经网络，首个可训练模型
 
 `itemcf` 具有以下特征：
 
@@ -100,15 +100,16 @@ model = ItemCF(similarity="cosine", top_k_neighbors=50, recommend_k=10)
 - 已实现 `fit()` 与 `predict()`
 - 能产出标准 `PredictionBundle`
 
-`dssm` 具有以下特征：
+`hyformer` 具有以下特征：
 
-- 家族：`classical`
+- 家族：`unified`
 - `task_type = "pointwise"`
 - `problem_type = "binary"`
 - `supports_training = True`
 - 继承 `NeuralRecommender`，实现 `forward()` 和 `compute_loss()`
 - 双塔结构：user embedding + MLP → item embedding + MLP → cosine similarity
 - 训练时使用 BCE loss
+- 支持稀疏/密集参数分离：Embedding 用 Adagrad，MLP 用 AdamW
 - 可通过 `run_experiment()` 的训练型路径完整运行
 
 ### 当前仅目录预留或占位的模型
@@ -174,7 +175,7 @@ model = ItemCF(
 - 实现 `forward()` 和 `compute_loss()`
 - 通过 training 基础设施接入 Trainer
 
-当前文档必须明确：训练基础设施已通过 `_execute_trainable_path()` 接入 experiment 主流程，首个可训练模型 `dssm` 可作为完整样板的参考实现。
+当前文档必须明确：训练基础设施已通过 `_execute_trainable_path()` 接入 experiment 主流程，首个可训练模型 `hyformer` 可作为完整样板的参考实现。
 
 ## 接入前检查
 
@@ -196,4 +197,40 @@ model = ItemCF(
 
 ## 当前最重要的结论
 
-RecBench 的模型层当前已经拥有稳定的注册与契约框架，且已通过 `itemcf`（非训练）和 `dssm`（训练）验证了两类模型在统一主干内的共存能力。但“模型家族目录很多”不等于“模型实现很多”，文档必须把已实现模型与大量目录预留/占位文件严格区分开。
+RecBench 的模型层当前已经拥有稳定的注册与契约框架，且已通过 `itemcf`（非训练）和 `hyformer`（训练）验证了两类模型在统一主干内的共存能力。但"模型家族目录很多"不等于"模型实现很多"，文档必须把已实现模型与大量目录预留/占位文件严格区分开。
+
+## HyFormer 使用示例
+
+```python
+from recsys import auto_discover_models, get_model
+
+auto_discover_models()
+HyFormer = get_model("hyformer")
+
+model = HyFormer(
+    config={"d_model": 64, "emb_dim": 64},
+    schema_metadata={"num_users": 10000, "num_items": 50000},
+)
+```
+
+HyFormer 的关键参数包括：
+
+- `d_model`：隐藏维度，默认 64
+- `emb_dim`：Embedding 维度，默认 64
+- `num_heads`：注意力头数，默认 4
+- `num_blocks`：Transformer 块数，默认 2
+- `dropout`：Dropout 率，默认 0.1
+
+### 稀疏/密集参数分离
+
+HyFormer 支持稀疏/密集参数分离，允许使用不同的优化器：
+
+```python
+from torch.optim import Adagrad, AdamW
+
+# 稀疏参数（Embedding）用 Adagrad
+sparse_optimizer = Adagrad(model.get_sparse_params(), lr=0.05)
+
+# 密集参数（MLP）用 AdamW
+dense_optimizer = AdamW(model.get_dense_params(), lr=0.001)
+```
