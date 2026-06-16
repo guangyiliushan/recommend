@@ -99,6 +99,9 @@ ignore = ["E501"]  # line length handled by black
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests that require network access or real data",
+]
 
 [tool.coverage.run]
 source = ["src"]

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+from typing import Any, Callable, Dict, List, Type, TypeVar
 
 T = TypeVar("T")
 
@@ -74,7 +74,7 @@ class Registry:
         """
         package = importlib.import_module(package_path)
         count = 0
-        for _, mod_name, is_pkg in pkgutil.walk_packages(
+        for _, mod_name, _is_pkg in pkgutil.walk_packages(
             package.__path__,
             prefix=package.__name__ + ".",
         ):

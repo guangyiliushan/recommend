@@ -7,19 +7,18 @@
 - evaluator.py: 调度、组装和输出契约
 
 主入口:
-    from src.recsys.evaluation import evaluate, EvaluationConfig, EvaluationResult
+    from recsys.evaluation import evaluate, EvaluationConfig, EvaluationResult
 """
 
-from src.recsys.evaluation.evaluator import (
+from recsys.evaluation.evaluator import (
     EvaluationConfig,
     EvaluationResult,
     evaluate,
+    evaluate_multitask,
     evaluate_pointwise,
     evaluate_ranking,
-    evaluate_multitask,
 )
-
-from src.recsys.evaluation.metrics import (
+from recsys.evaluation.metrics import (
     CANONICAL_METRICS,
     METRIC_ALIASES,
     ClassificationMetricsResult,
@@ -46,8 +45,7 @@ from src.recsys.evaluation.metrics import (
     evaluate_multiclass_classification,
     normalize_metric_name,
 )
-
-from src.recsys.evaluation.ranking import (
+from recsys.evaluation.ranking import (
     CANONICAL_RANKING_METRICS,
     RANKING_METRIC_ALIASES,
     GroupRankingResult,
@@ -62,8 +60,7 @@ from src.recsys.evaluation.ranking import (
     evaluate_single_group,
     normalize_ranking_metric_name,
 )
-
-from src.recsys.evaluation.visualization import (
+from recsys.evaluation.visualization import (
     CurveData,
     VisualizationOutput,
     export_metrics_csv,

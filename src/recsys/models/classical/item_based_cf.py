@@ -23,7 +23,6 @@ from recsys.core.base_model import BaseRecommender, Capability
 from recsys.core.prediction_bundle import PredictionBundle
 from recsys.core.registry import MODEL_REGISTRY
 
-
 # ---------------------------------------------------------------------------
 # 相似度策略注册表
 # ---------------------------------------------------------------------------
@@ -109,7 +108,7 @@ class ItemBasedCF(BaseRecommender):
         self._item_neighbors: Dict[int, Dict[int, float]] = {}
         # 物品被多少人交互过: {item_id: count}
         self._item_popularity: Dict[int, int] = {}
-        
+
         # 添加推荐能力
         self._capabilities.add(Capability.RECOMMENDER)
         self._capabilities.add(Capability.RANKER)
@@ -181,13 +180,13 @@ class ItemBasedCF(BaseRecommender):
             user_train_items = {}
         if user_test_items is None:
             user_test_items = {}
-        
+
         if not self._fitted:
             raise RuntimeError(
                 "ItemBasedCF 尚未完成 fit()，"
                 "请先调用 fit(user_item_pairs) 构建相似度矩阵"
             )
-        
+
         if k is None:
             k = self._recommend_k
 

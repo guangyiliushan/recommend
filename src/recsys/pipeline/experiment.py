@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -43,7 +42,6 @@ from recsys.evaluation.evaluator import (
     EvaluationResult,
     evaluate,
 )
-
 
 # ============================================================================
 # 阶段与状态枚举
@@ -361,9 +359,8 @@ def write_predictions_parquet(
                 else:
                     row["y_score"] = y_score[i]
                     row["y_true"] = y_true[i] if i < len(y_true) else None
-                if candidate_ids and i < len(candidate_ids):
-                    if isinstance(candidate_ids[i], list):
-                        row["num_candidates"] = len(candidate_ids[i])
+                if candidate_ids and i < len(candidate_ids) and isinstance(candidate_ids[i], list):
+                    row["num_candidates"] = len(candidate_ids[i])
                 rows.append(row)
         else:
             # pointwise：每样本一行

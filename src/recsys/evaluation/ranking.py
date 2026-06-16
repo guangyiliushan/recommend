@@ -22,11 +22,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Dict, List, Optional, Set, Union
 
 import numpy as np
 from numpy.typing import ArrayLike
-
 
 # ---------------------------------------------------------------------------
 # 指标别名映射
@@ -694,8 +693,8 @@ def evaluate_ranking(
     group_results: List[GroupRankingResult] = []
     skipped_groups: List[Any] = []
 
-    for i, (gid, y_true, y_score, candidate_ids) in enumerate(
-        zip(group_ids, y_true_list, y_score_list, candidate_ids_list)
+    for _i, (gid, y_true, y_score, candidate_ids) in enumerate(
+        zip(group_ids, y_true_list, y_score_list, candidate_ids_list, strict=False)
     ):
         group_result = evaluate_single_group(
             y_true=y_true,
@@ -783,39 +782,59 @@ def evaluate_ranking_from_bundle(
     if k_list is None:
         k_list = bundle.k_list if bundle.k_list else [5, 10, 20]
 
-    # 按组聚合数据
-    group_data: Dict[Any, Dict[str, Any]] = {}
+    # 检测数据格式：按组聚合 vs 展平
+    # 按组聚合：y_true[i] 是 list/set（一组标签），例如 ItemCF 输出
+    # 展平：y_true[i] 是标量（一条样本），需要按 group_ids 重新聚合
+    _is_grouped = (
+        len(bundle.group_ids) == len(bundle.y_true)
+        and len(bundle.y_true) > 0
+        and isinstance(bundle.y_true[0], (list, set))
+    )
 
-    for i, gid in enumerate(bundle.group_ids):
-        if gid not in group_data:
-            group_data[gid] = {
-                "y_true": [],
-                "y_score": [],
-                "candidate_ids": [],
-            }
-
-        group_data[gid]["y_true"].append(bundle.y_true[i] if bundle.y_true else 0)
-        group_data[gid]["y_score"].append(bundle.y_score[i] if bundle.y_score else 0.0)
+    if _is_grouped:
+        # 数据已经是按组聚合格式，直接构建评估输入
+        group_ids = list(bundle.group_ids)
+        y_true_list = list(bundle.y_true)
+        y_score_list = [np.asarray(s) for s in bundle.y_score]
 
         if bundle.candidate_ids:
-            group_data[gid]["candidate_ids"].append(bundle.candidate_ids[i])
-
-    # 准备评估输入
-    group_ids = list(group_data.keys())
-    y_true_list = []
-    y_score_list = []
-    candidate_ids_list = []
-
-    for gid in group_ids:
-        data = group_data[gid]
-        y_true_list.append(data["y_true"])
-        y_score_list.append(np.array(data["y_score"]))
-
-        if data["candidate_ids"]:
-            candidate_ids_list.append(data["candidate_ids"])
+            candidate_ids_list = list(bundle.candidate_ids)
         else:
-            # 如果没有 candidate_ids，使用索引
-            candidate_ids_list.append(list(range(len(data["y_score"]))))
+            candidate_ids_list = [list(range(len(s))) for s in bundle.y_score]
+    else:
+        # 数据是展平格式，按 group_ids 重新聚合
+        group_data: Dict[Any, Dict[str, Any]] = {}
+
+        for i, gid in enumerate(bundle.group_ids):
+            if gid not in group_data:
+                group_data[gid] = {
+                    "y_true": [],
+                    "y_score": [],
+                    "candidate_ids": [],
+                }
+
+            group_data[gid]["y_true"].append(bundle.y_true[i] if bundle.y_true else 0)
+            group_data[gid]["y_score"].append(bundle.y_score[i] if bundle.y_score else 0.0)
+
+            if bundle.candidate_ids:
+                group_data[gid]["candidate_ids"].append(bundle.candidate_ids[i])
+
+        # 准备评估输入
+        group_ids = list(group_data.keys())
+        y_true_list = []
+        y_score_list = []
+        candidate_ids_list = []
+
+        for gid in group_ids:
+            data = group_data[gid]
+            y_true_list.append(data["y_true"])
+            y_score_list.append(np.array(data["y_score"]))
+
+            if data["candidate_ids"]:
+                candidate_ids_list.append(data["candidate_ids"])
+            else:
+                # 如果没有 candidate_ids，使用索引
+                candidate_ids_list.append(list(range(len(data["y_score"]))))
 
     return evaluate_ranking(
         group_ids=group_ids,

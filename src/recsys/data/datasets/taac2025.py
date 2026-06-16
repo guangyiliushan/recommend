@@ -33,7 +33,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from recsys.core.base_dataset import BaseDataset, T_co
+from recsys.core.base_dataset import BaseDataset
 
 logger = logging.getLogger(__name__)
 

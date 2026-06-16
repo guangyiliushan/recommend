@@ -21,17 +21,16 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from src.recsys.core.prediction_bundle import PredictionBundle
-from src.recsys.evaluation.metrics import (
+from recsys.core.prediction_bundle import PredictionBundle
+from recsys.evaluation.metrics import (
     ClassificationMetricsResult,
     evaluate_binary_classification,
     evaluate_multiclass_classification,
 )
-from src.recsys.evaluation.ranking import (
+from recsys.evaluation.ranking import (
     RankingMetricsResult,
     evaluate_ranking_from_bundle,
 )
-
 
 # ---------------------------------------------------------------------------
 # 配置结构
@@ -134,12 +133,12 @@ class EvaluationConfig:
             return f"ndcg@{k}"
 
         if task_type == "pointwise" or task_type == "multitask":
-            if problem_type == "binary":
-                return "pr_auc"  # 类别不平衡时优先 PR-AUC
-            elif problem_type == "multiclass":
-                return "accuracy"
-            elif problem_type == "multilabel":
-                return "f1_macro"
+            _problem_metrics = {
+                "binary": "pr_auc",
+                "multiclass": "accuracy",
+                "multilabel": "f1_macro",
+            }
+            return _problem_metrics.get(problem_type, "roc_auc")
 
         return "roc_auc"
 
@@ -344,12 +343,10 @@ def evaluate_pointwise(
             result.summary_metrics = metrics_result.metrics
 
             # 曲线数据
-            if config.generate_curves and metrics_result.roc_curve:
-                if "roc" in config.curve_types:
-                    result.curve_artifacts["roc_curve"] = metrics_result.roc_curve
-            if config.generate_curves and metrics_result.pr_curve:
-                if "pr" in config.curve_types:
-                    result.curve_artifacts["pr_curve"] = metrics_result.pr_curve
+            if config.generate_curves and metrics_result.roc_curve and "roc" in config.curve_types:
+                result.curve_artifacts["roc_curve"] = metrics_result.roc_curve
+            if config.generate_curves and metrics_result.pr_curve and "pr" in config.curve_types:
+                result.curve_artifacts["pr_curve"] = metrics_result.pr_curve
 
             # 混淆矩阵
             if metrics_result.confusion_matrix:
@@ -589,7 +586,7 @@ def evaluate_multitask(
         if task_mask is not None:
             mask = np.asarray(task_mask, dtype=bool)
             task_scores = [s for i, s in enumerate(task_scores) if mask[i]]
-            task_labels = [l for i, l in enumerate(task_labels) if mask[i]]
+            task_labels = [label for i, label in enumerate(task_labels) if mask[i]]
 
         if len(task_scores) == 0 or len(task_labels) == 0:
             warnings.append(f"task '{task_name}': empty after mask, skipped")

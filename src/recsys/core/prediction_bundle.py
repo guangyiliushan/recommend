@@ -94,7 +94,7 @@ class PredictionBundle:
                 f"当前为 '{self.task_type}'"
             )
 
-        _VALID_PROBLEM_TYPES = {
+        _VALID_PROBLEM_TYPES = {  # noqa: N806
             "binary", "multiclass", "multilabel",
             "regression", "implicit_ranking", "listwise_ranking",
         }

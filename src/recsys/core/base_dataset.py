@@ -14,7 +14,7 @@ Subclasses implement:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Dict, List, Optional, Tuple, TypeVar
 
 import torch
 from torch.utils.data import DataLoader, Dataset
