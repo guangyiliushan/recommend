@@ -14,6 +14,11 @@ Dataset subsets:
     candidate   – candidate item pool for retrieval evaluation
     mm_emb_*    – multimodal embeddings (text/image/video, various dims)
 
+Optimization:
+    Preprocessed sequences are cached to local Parquet files for fast reload.
+    First run: processes raw HF data and saves cache.
+    Subsequent runs: loads from cache in seconds.
+
 Usage:
     ds = TAAC2025Dataset(
         version="10M",
@@ -26,8 +31,11 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -73,6 +81,8 @@ class _SequenceSplit(Dataset[Dict[str, torch.Tensor]]):
         # Truncate sequence to max_seq_len
         item_ids = seq["item_ids"][: self.max_seq_len]
         labels = seq["labels"][: self.max_seq_len]
+        user_id = seq["user_id"]
+        candidate_items = seq.get("candidate_items", np.array([], dtype=np.int64))
 
         # Pad if needed
         pad_len = self.max_seq_len - len(item_ids)
@@ -81,8 +91,13 @@ class _SequenceSplit(Dataset[Dict[str, torch.Tensor]]):
             labels = np.pad(labels, (0, pad_len), constant_values=-100)
 
         return {
+            "user_id": torch.as_tensor(user_id, dtype=torch.long),
+            "item_id": torch.as_tensor(
+                item_ids[0] if len(item_ids) > 0 else 0, dtype=torch.long
+            ),
             "item_ids": torch.as_tensor(item_ids, dtype=torch.long),
             "labels": torch.as_tensor(labels, dtype=torch.long),
+            "candidate_items": torch.as_tensor(candidate_items, dtype=torch.long),
         }
 
 
@@ -150,8 +165,54 @@ class TAAC2025Dataset(BaseDataset):
 
     # ----- loading -------------------------------------------------------
 
+    def _get_cache_path(self) -> Path:
+        """Get the cache file path for preprocessed sequences."""
+        # Hash based on config to invalidate cache when settings change
+        config_str = f"{self._version}_{self.split_ratios}_{self.min_seq_len}"
+        config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
+        cache_dir = Path(self.root_dir) / "taac2025_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / f"sequences_{self._version}_{config_hash}.npz"
+
+    def _load_from_cache(self, cache_path: Path) -> Optional[Tuple[Dict, Dict, Dict]]:
+        """Load preprocessed sequences from cache if exists."""
+        if not cache_path.exists():
+            return None
+        try:
+            data = np.load(cache_path, allow_pickle=True)
+            meta = json.loads(str(data["meta"]))
+            train_data = data["train"].tolist()
+            val_data = data["val"].tolist()
+            test_data = data["test"].tolist()
+            logger.info("Loaded preprocessed sequences from cache: %s", cache_path)
+            return meta, train_data, val_data, test_data
+        except Exception as e:
+            logger.warning("Failed to load cache: %s", e)
+            return None
+
+    def _save_to_cache(
+        self,
+        cache_path: Path,
+        meta: Dict,
+        train_data: List,
+        val_data: List,
+        test_data: List,
+    ) -> None:
+        """Save preprocessed sequences to cache."""
+        try:
+            np.savez(
+                cache_path,
+                meta=np.array(json.dumps(meta)),
+                train=np.array(train_data, dtype=object),
+                val=np.array(val_data, dtype=object),
+                test=np.array(test_data, dtype=object),
+            )
+            logger.info("Saved preprocessed sequences to cache: %s", cache_path)
+        except Exception as e:
+            logger.warning("Failed to save cache: %s", e)
+
     def _load_raw(self) -> Dict[str, Any]:
-        """Load the HF dataset subsets and return raw dict."""
+        """Load only the seq subset (lazy-load others on demand)."""
         try:
             from datasets import load_dataset
         except ImportError:
@@ -160,111 +221,134 @@ class TAAC2025Dataset(BaseDataset):
                 "Install with: pip install datasets"
             ) from None
 
-        logger.info("Loading %s from HuggingFace …", self._repo_id)
-
-        # Load core subsets
+        logger.info("Loading %s seq split from HuggingFace …", self._repo_id)
         ds_seq = load_dataset(
             self._repo_id, "seq", split="train", cache_dir=self.root_dir
         )
-        ds_candidate = load_dataset(
-            self._repo_id, "candidate", split="train", cache_dir=self.root_dir
-        )
-        ds_user_feat = load_dataset(
-            self._repo_id, "user_feat", split="train", cache_dir=self.root_dir
-        )
-        ds_item_feat = load_dataset(
-            self._repo_id, "item_feat", split="train", cache_dir=self.root_dir
-        )
-
-        return {
-            "seq": ds_seq,
-            "candidate": ds_candidate,
-            "user_feat": ds_user_feat,
-            "item_feat": ds_item_feat,
-        }
+        return {"seq": ds_seq}
 
     def _prepare_splits(
         self, raw: Dict[str, Any]
     ) -> Tuple[Dataset[Any], Dataset[Any], Dataset[Any]]:
-        """Build user sequences from seq subset, then split by user."""
-        ds_seq = raw["seq"]
+        """Build user sequences from seq subset.
 
-        # Build user → item sequence mapping
-        user_seqs: Dict[int, List[Dict[str, Any]]] = {}
-        all_items: set = set()
+        TAAC2025 seq schema:
+            user_id: int64
+            seq: List<{item_id: int64, action_type: int32, timestamp: int64}>
 
-        for row in ds_seq:
-            # Determine user_id from user_feat or use retrieval_id as proxy
-            # The "seq" subset rows are per-user interactions;
-            # we group by implicit row index as user proxy for now.
-            # In production, this should use a proper user_id from user_feat.
-            uid = row.get("user_id") if "user_id" in row else hash(tuple(row.items())) % (10**7)
-            if isinstance(uid, dict):
-                uid = uid.get("feature_value", 0)
-            uid = int(uid) if uid is not None else 0
+        Uses caching to avoid reprocessing on subsequent runs.
+        """
+        # Check cache first
+        cache_path = self._get_cache_path()
+        cached = self._load_from_cache(cache_path)
+        if cached:
+            meta, train_data, val_data, test_data = cached
+            self._num_users = meta.get("num_users", 0)
+            self._num_items = meta.get("num_items", 0)
+            all_items = set(meta.get("all_items", []))
+        else:
+            # Process raw data
+            ds_seq = raw["seq"]
+            total = len(ds_seq)
+            logger.info("Processing %d user sequences (first run, caching results)...", total)
 
-            item_id = row.get("item_id", 0)
-            if isinstance(item_id, dict):
-                item_id = int(item_id.get("feature_value", 0))
-            else:
-                item_id = int(item_id) if item_id is not None else 0
+            # Build user → item sequence mapping
+            user_seqs: Dict[int, List[int]] = {}
+            all_items: Set[int] = set()
 
-            all_items.add(item_id)
-            user_seqs.setdefault(uid, []).append(item_id)
+            # Use iter with batch_size for memory efficiency
+            for batch in ds_seq.iter(batch_size=50000):
+                for uid, seq_items in zip(batch["user_id"], batch["seq"], strict=False):
+                    if uid is None:
+                        continue
+                    uid = int(uid)
+                    for item in seq_items:
+                        iid = int(item["item_id"])
+                        user_seqs.setdefault(uid, []).append(iid)
+                        all_items.add(iid)
 
-        # Filter users with enough interactions
-        user_ids: List[int] = []
-        item_sequences: List[List[int]] = []
-        for uid, items in user_seqs.items():
-            if len(items) >= self.min_seq_len:
-                user_ids.append(uid)
-                item_sequences.append(items)
+            # Filter users with enough interactions
+            user_ids: List[int] = []
+            item_sequences: List[List[int]] = []
+            for uid, items in user_seqs.items():
+                if len(items) >= self.min_seq_len:
+                    user_ids.append(uid)
+                    item_sequences.append(items)
 
-        self._num_users = len(user_ids)
-        self._num_items = len(all_items)
+            self._num_users = len(user_ids)
+            self._num_items = len(all_items)
+            logger.info(
+                "Built %d user sequences across %d unique items.",
+                self._num_users,
+                self._num_items,
+            )
+
+            # Build labeled sequences (each position predicts the next item)
+            sequences: List[Dict[str, Any]] = []
+            for uid, items in zip(user_ids, item_sequences, strict=False):
+                for pos in range(1, len(items)):
+                    sequences.append({
+                        "user_id": uid,
+                        "item_ids": items[:pos],
+                        "labels": items[1: pos + 1],
+                    })
+
+            if len(sequences) == 0:
+                raise RuntimeError(
+                    f"No valid sequences generated. "
+                    f"Check min_seq_len ({self.min_seq_len}) or dataset content."
+                )
+
+            # Shuffle and split
+            rng = np.random.default_rng(42)
+            indices = np.arange(len(sequences))
+            rng.shuffle(indices)
+            sequences = [sequences[i] for i in indices]
+
+            n = len(sequences)
+            n_train = int(n * self.split_ratios[0])
+            n_val = int(n * self.split_ratios[1])
+
+            train_data = sequences[:n_train]
+            val_data = sequences[n_train: n_train + n_val]
+            test_data = sequences[n_train + n_val:]
+
+            # Save to cache
+            meta = {
+                "num_users": self._num_users,
+                "num_items": self._num_items,
+                "all_items": list(all_items),
+            }
+            self._save_to_cache(cache_path, meta, train_data, val_data, test_data)
+
         logger.info(
-            "Built %d user sequences across %d unique items.",
-            self._num_users,
-            self._num_items,
+            "Splits: train=%d, val=%d, test=%d",
+            len(train_data), len(val_data), len(test_data)
         )
 
-        # Build labeled sequences (each position predicts the next item)
-        sequences: List[Dict[str, Any]] = []
-        for items in item_sequences:
-            for pos in range(1, len(items)):
-                sequences.append({
-                    "item_ids": np.array(items[:pos], dtype=np.int64),
-                    "labels": np.array(items[1: pos + 1], dtype=np.int64),
-                })
-
-        # Shuffle and split
-        rng = np.random.default_rng(42)
-        rng.shuffle(sequences)  # type: ignore[arg-type]
-
-        n = len(sequences)
-        n_train = int(n * self.split_ratios[0])
-        n_val = int(n * self.split_ratios[1])
-
-        train_seqs = sequences[:n_train]
-        val_seqs = sequences[n_train: n_train + n_val]
-        test_seqs = sequences[n_train + n_val:]
-
-        logger.info(
-            "Splits: train=%d, val=%d, test=%d", len(train_seqs), len(val_seqs), len(test_seqs)
-        )
+        # Convert to numpy arrays for Dataset
+        def to_numpy(seqs):
+            return [
+                {
+                    "user_id": s["user_id"],
+                    "item_ids": np.array(s["item_ids"], dtype=np.int64),
+                    "labels": np.array(s["labels"], dtype=np.int64),
+                }
+                for s in seqs
+            ]
 
         item_pool = torch.as_tensor(sorted(all_items), dtype=torch.long)
 
         train_ds = _SequenceSplit(
-            train_seqs, item_pool=item_pool,
+            to_numpy(train_data), item_pool=item_pool,
             max_seq_len=self.max_seq_len, neg_sample_count=self.neg_sample_count,
         )
         val_ds = _SequenceSplit(
-            val_seqs, item_pool=item_pool,
+            to_numpy(val_data), item_pool=item_pool,
             max_seq_len=self.max_seq_len, neg_sample_count=self.neg_sample_count,
         )
         test_ds = _SequenceSplit(
-            test_seqs, item_pool=item_pool,
+            to_numpy(test_data), item_pool=item_pool,
             max_seq_len=self.max_seq_len, neg_sample_count=self.neg_sample_count,
         )
 
