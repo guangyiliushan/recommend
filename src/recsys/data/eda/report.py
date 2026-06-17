@@ -344,3 +344,73 @@ def generate_markdown_report(
 
     logger.info("Report written to %s", output_path)
     return output_path
+
+
+def generate_vector_report(
+    vector_result: Any,
+    metadata: SampleMetadata,
+    chart_files: Dict[str, Path],
+    output_path: Path,
+    ctx: Any = None,
+) -> Path:
+    """Generate a vector analysis Markdown report (for mm_emb_* subsets)."""
+    from recsys.data.eda.stats.vector import VectorResult
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: List[str] = []
+    has_chart = lambda name: name in chart_files  # noqa: E731
+    assets_dir = ctx.assets_dir_rel if ctx else "assets/figures/eda"
+
+    lines.append("# 向量分析报告\n")
+
+    if ctx:
+        lines.append(f"> **数据集**: {ctx.dataset_label} / {ctx.subset}")
+        lines.append(f"> **生成时间**: {ctx.generated_at}")
+        lines.append(f"> **模态**: {getattr(vector_result, 'modality', 'unknown')}\n")
+
+    if not isinstance(vector_result, VectorResult) or vector_result.skipped:
+        lines.append(f"> !!! warning \"分析跳过\"\n> {vector_result.skip_reason if vector_result else 'No data'}\n")
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+        return output_path
+
+    # Vector overview
+    lines.append("## 向量概况\n")
+    lines.append(f"- **维度**: {vector_result.dim}")
+    lines.append(f"- **向量数**: {vector_result.n_vectors:,}")
+    if vector_result.sampled_at_load:
+        lines.append(f"- **原始向量数**: {vector_result.original_count:,} (加载时预采样)")
+    lines.append(f"- **零向量**: {vector_result.zero_vector_count:,} ({vector_result.zero_vector_ratio:.2%})")
+    lines.append(f"- **重复率**: {vector_result.duplicate_ratio:.2%}\n")
+
+    # Norm distribution chart
+    if has_chart("vector_norms"):
+        lines.append(_echarts_div("vector_norms", "范数分布", assets_dir))
+
+    ns = vector_result.norm_stats
+    if ns:
+        lines.append("### 范数统计\n")
+        for key in ["mean", "std", "min", "p25", "p50", "p75", "p95", "max"]:
+            val = ns.get(key, 0.0)
+            lines.append(f"- **{key}**: {val:.4f}")
+        lines.append("")
+
+    # Dimension variance chart
+    if has_chart("vector_dim_variance"):
+        lines.append(_echarts_div("vector_dim_variance", "维度方差", assets_dir))
+
+    dv = vector_result.dim_variance
+    if dv:
+        lines.append("### 维度方差统计\n")
+        for key, label in [("mean_var", "平均方差"), ("min_var", "最小方差"),
+                            ("max_var", "最大方差"), ("mean_abs_mean", "平均|均值|")]:
+            val = dv.get(key, 0.0)
+            lines.append(f"- **{label}**: {val:.6f}")
+        lines.append("")
+
+    lines.append("---\n")
+    lines.append("*本报告由 `recsys.data.eda.stats.vector` 模块自动生成。*\n")
+
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Vector report written to %s", output_path)
+    return output_path

@@ -17,6 +17,7 @@ from recsys.data.dataset_registry import (  # noqa: F401
     get_data_backend,
     get_database_backend,
     get_database_reader_class,
+    get_dataset_capabilities,
     has_database_capability,
     list_compression_codecs,
     list_data_backends,

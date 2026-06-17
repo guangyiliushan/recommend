@@ -456,6 +456,83 @@ def _render_cross_domain_overlap(
 # ---------------------------------------------------------------------------
 
 # Chart name �?(renderer function, condition flag)
+def _render_vector_norms(
+    overview=None, missing=None, distribution=None, sequence=None,
+    effectiveness=None, user_item=None, metadata=None, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Vector norm distribution histogram (from vector stats module)."""
+    vector_result = kwargs.get("vector_result")
+    if vector_result is None:
+        return None
+    from recsys.data.eda.stats.vector import VectorResult
+
+    if not isinstance(vector_result, VectorResult) or vector_result.skipped:
+        return None
+    if not vector_result.norm_stats:
+        return None
+
+    ns = vector_result.norm_stats
+    # Build histogram bins (10 bins between min and max)
+    # We can't reconstruct the full histogram without raw data,
+    # so show a summary bar chart with key statistics
+    labels = ["min", "p25", "p50", "p75", "p95", "max"]
+    values = [ns.get(k, 0.0) for k in labels]
+
+    return {
+        "echarts_option": {
+            "title": {"text": f"Vector Norm Distribution ({vector_result.modality})"},
+            "tooltip": {"trigger": "axis", "formatter": "{b}: {c}"},
+            "xAxis": {"type": "category", "data": labels},
+            "yAxis": {"type": "value", "name": "L2 Norm"},
+            "series": [{
+                "type": "bar",
+                "data": values,
+                "markLine": {
+                    "data": [{"type": "average", "name": "Mean"}],
+                },
+            }],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_vector_dim_variance(
+    overview=None, missing=None, distribution=None, sequence=None,
+    effectiveness=None, user_item=None, metadata=None, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Per-dimension variance summary (bar chart of key metrics)."""
+    vector_result = kwargs.get("vector_result")
+    if vector_result is None:
+        return None
+    from recsys.data.eda.stats.vector import VectorResult
+
+    if not isinstance(vector_result, VectorResult) or vector_result.skipped:
+        return None
+    if not vector_result.dim_variance:
+        return None
+
+    dv = vector_result.dim_variance
+    labels = ["Mean Var", "Min Var", "Max Var", "|Mean|"]
+    values = [
+        dv.get("mean_var", 0.0),
+        dv.get("min_var", 0.0),
+        dv.get("max_var", 0.0),
+        dv.get("mean_abs_mean", 0.0),
+    ]
+
+    return {
+        "echarts_option": {
+            "title": {"text": f"Dimension Variance ({vector_result.modality}, dim={vector_result.dim})"},
+            "tooltip": {"trigger": "axis", "formatter": "{b}: {c}"},
+            "xAxis": {"type": "category", "data": labels},
+            "yAxis": {"type": "value", "name": "Variance"},
+            "series": [{"type": "bar", "data": values}],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+# Chart name → renderer function
 _CHART_REGISTRY: Dict[str, Any] = {
     "column_layout": _render_column_layout,
     "label_distribution": _render_label_distribution,
@@ -473,6 +550,8 @@ _CHART_REGISTRY: Dict[str, Any] = {
     "feature_auc": _render_feature_auc,
     "user_activity": _render_user_activity,
     "cross_domain_overlap": _render_cross_domain_overlap,
+    "vector_norms": _render_vector_norms,
+    "vector_dim_variance": _render_vector_dim_variance,
 }
 
 
@@ -486,6 +565,7 @@ def render_to_echarts(
     metadata: SampleMetadata,
     output_dir: Path,
     ctx: Any = None,
+    **kwargs: Any,
 ) -> RenderOutput:
     """Convert all statistical results to ECharts JSON files.
 
@@ -521,6 +601,7 @@ def render_to_echarts(
             user_item=user_item,
             metadata=metadata,
             ctx=ctx,
+            **kwargs,
         )
         if chart_data is not None:
             filepath = _write_chart(output_dir, name, chart_data)

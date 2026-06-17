@@ -47,3 +47,7 @@ from recsys.data.eda.stats.user_item import (
 from recsys.data.eda.stats.user_item import (
     analyze as analyze_user_item,
 )
+from recsys.data.eda.stats.vector import VectorResult  # noqa: F401, E402
+from recsys.data.eda.stats.vector import (
+    analyze as analyze_vector,
+)

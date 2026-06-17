@@ -15,7 +15,7 @@ All registries gracefully handle missing optional dependencies.
 # Import registries so that side-effect registration happens.
 # Trigger auto-import of all dataset adapters to register them.
 # ---- Data backend discovery -------------------------------------------
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import recsys.data.datasets.taac2025  # noqa: F401
 import recsys.data.datasets.taac2026  # noqa: F401
@@ -198,3 +198,29 @@ def has_database_capability(name: str, capability: str) -> bool:
     if backend is None:
         return False
     return capability in backend.get("capabilities", [])
+
+
+def get_dataset_capabilities(name: str) -> Dict[str, Any]:
+    """Get capability metadata for a registered dataset.
+
+    Returns a dict with keys like:
+        supports_multi_subset, supports_candidates,
+        supports_vector_embeddings, default_eda_subset.
+    Unknown datasets return all keys as False/None.
+    """
+    default = {
+        "supports_multi_subset": False,
+        "supports_candidates": False,
+        "supports_vector_embeddings": False,
+        "default_eda_subset": None,
+    }
+    try:
+        meta = DATASET_REGISTRY.get_metadata(name)
+    except KeyError:
+        return default
+    return {
+        "supports_multi_subset": bool(meta.get("supports_multi_subset")),
+        "supports_candidates": bool(meta.get("supports_candidates")),
+        "supports_vector_embeddings": bool(meta.get("supports_vector_embeddings")),
+        "default_eda_subset": meta.get("default_eda_subset"),
+    }
