@@ -143,3 +143,6 @@ dev = [
     "recbench",
     "ruff>=0.15.17",
 ]
+
+[project.scripts]
+recsys-dataset-eda = "recsys.data.eda.cli:main"

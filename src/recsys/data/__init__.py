@@ -1,4 +1,4 @@
-"""Data pipeline: datasets, preprocessing, feature engineering, negative sampling.
+"""Data pipeline: datasets, preprocessing, feature engineering, negative sampling, EDA.
 
 Public API:
     - Dataset adapters (TAAC 2025/2026)
@@ -7,6 +7,7 @@ Public API:
     - Negative sampling (NegativeSampler, PostgresNegativeSampler)
     - Database backends (PostgresReader, PostgresVectorReader)
     - Backend/format/codec discovery
+    - EDA module (EDAConfig, SampleMetadata, run_eda)
 """
 
 # ---- Dataset adapters ---------------------------------------------------
@@ -34,6 +35,10 @@ from recsys.data.datasets.taac2026 import (  # noqa: F401
     TAAC2026Dataset,
     TAAC2026SecondRound,
 )
+
+# ---- EDA ----------------------------------------------------------------
+from recsys.data.eda import EDAConfig, SampleMetadata  # noqa: F401, E402
+from recsys.data.eda.cli import run_eda  # noqa: F401, E402
 
 # ---- Feature engineering ------------------------------------------------
 from recsys.data.feature_engineering import (  # noqa: F401

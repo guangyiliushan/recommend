@@ -1,0 +1,64 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Top Co-Missing Feature Pairs"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "item_int_feats_83 & item_int_feats_84",
+        "item_int_feats_83 & item_int_feats_85",
+        "item_int_feats_84 & item_int_feats_85",
+        "user_int_feats_101 & user_int_feats_102",
+        "user_int_feats_100 & user_int_feats_101",
+        "user_int_feats_101 & user_int_feats_103",
+        "user_int_feats_101 & user_int_feats_109",
+        "user_int_feats_102 & user_int_feats_103",
+        "user_int_feats_100 & user_int_feats_102",
+        "user_int_feats_102 & user_int_feats_109"
+      ],
+      "axisLabel": {
+        "rotate": 45
+      }
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "Co-Missing Rate"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          0.832,
+          0.832,
+          0.832,
+          0.828,
+          0.805,
+          0.798,
+          0.785,
+          0.782,
+          0.767,
+          0.76
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2026_data_sample",
+    "dataset_label": "taac2026_data_sample (1,000 rows)",
+    "run_tag": null,
+    "generated_at": "2026-06-17T13:44:21.005475+00:00",
+    "sample_strategy": "none",
+    "total_rows": 1000,
+    "sample_ratio": 1.0,
+    "strat_rows": 1000,
+    "tail_rows": 0,
+    "union_rows": 1000,
+    "seed": 42,
+    "total_users": 1000,
+    "total_items": 837
+  }
+}
