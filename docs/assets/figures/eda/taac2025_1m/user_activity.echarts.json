@@ -37,7 +37,7 @@
     "dataset_id": "taac2025_1m",
     "dataset_label": "taac2025_1M (1,001,845 rows)",
     "run_tag": null,
-    "generated_at": "2026-06-17T14:40:00.568498+00:00",
+    "generated_at": "2026-06-17T15:45:55.217885+00:00",
     "sample_strategy": "none",
     "total_rows": 500000,
     "sample_ratio": 1.0,
