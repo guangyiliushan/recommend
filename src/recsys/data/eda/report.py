@@ -127,6 +127,11 @@ def generate_markdown_report(
         lines.append(f"> **数据集**：{ctx.dataset_label}")
         lines.append(f"> **生成时间**：{ctx.generated_at}")
         lines.append(f"> **数据来源**：{ctx.source_type}:{ctx.source_ref}")
+        if ctx.load_sampled and ctx.load_original_rows > 0:
+            lines.append(
+                f"> **原始行数**：{ctx.load_original_rows:,}"
+                f"（加载时预采样至 {ctx.sample_metadata.union_rows:,} 行）"
+            )
         lines.append(f"> **图表目录**：[{assets_dir}]({assets_dir})\n")
     else:
         lines.append("> 本报告由 `recsys-dataset-eda` 自动生成。\n")

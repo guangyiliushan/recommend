@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -39,6 +40,44 @@ def _compute_skew(series: pd.Series) -> float:
     if n < 3:
         return 0.0
     return float(series.skew())
+
+
+def _safe_cardinality(series: pd.Series, col_name: str) -> int:
+    """Compute cardinality for a column, handling deeply unhashable types.
+
+    Strategy (three-level fallback):
+        1. Direct .nunique() — works for int/float/str/category.
+        2. Tuple-ify outer iterables → .nunique() — handles lists of ints.
+        3. JSON-stringify → .nunique() — handles lists of dicts, nested
+           structs (e.g. TAAC2025 seq column with List<Struct<...>>).
+    """
+    try:
+        return int(series.nunique(dropna=True))
+    except TypeError:
+        pass
+
+    try:
+        return int(
+            series.dropna().apply(
+                lambda x: tuple(x) if hasattr(x, "__iter__") else x
+            ).nunique()
+        )
+    except TypeError:
+        pass
+
+    # Last resort: serialize to JSON string for uniqueness counting.
+    # Slower but handles arbitrarily deep unhashable structures.
+    serialized = series.dropna().apply(
+        lambda x: json.dumps(x, default=str, sort_keys=True)
+    )
+    result = int(serialized.nunique())
+    logger.debug(
+        "Cardinality for '%s' computed via JSON-serialization "
+        "(deeply unhashable content, %d non-null rows).",
+        col_name,
+        series.notna().sum(),
+    )
+    return result
 
 
 def analyze(
@@ -81,14 +120,7 @@ def analyze(
     # ---- feature cardinality ----
     feature_cardinality: Dict[str, int] = {}
     for col in df.columns:
-        try:
-            feature_cardinality[col] = int(df[col].nunique(dropna=True))
-        except TypeError:
-            # Handle unhashable types (e.g. list, numpy.ndarray) by
-            # converting to tuples for unique counting.
-            feature_cardinality[col] = int(
-                df[col].dropna().apply(lambda x: tuple(x) if hasattr(x, "__iter__") else x).nunique()  # type: ignore[arg-type]
-            )
+        feature_cardinality[col] = _safe_cardinality(df[col], col)
 
     # ---- cardinality bins ----
     cardinality_bins: Dict[str, int] = {label: 0 for _, _, label in _CARDINALITY_BINS}

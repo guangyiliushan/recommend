@@ -12,8 +12,9 @@ import logging
 import sys
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 
 from recsys.data.eda import EDAConfig, SampleMetadata, hybrid_sample
@@ -52,30 +53,101 @@ def _load_dataframe(dataset_path: str) -> pd.DataFrame:
         )
 
 
-def _extract_dataframe(raw: dict) -> pd.DataFrame:
+def _extract_dataframe(
+    raw: dict,
+    max_rows: int = 500_000,
+    seed: int = 42,
+) -> Tuple[pd.DataFrame, Optional[Dict[str, Any]]]:
     """Extract a pandas DataFrame from _load_raw() result dict.
+
+    For HuggingFace Dataset / pyarrow Table sources, pre-samples at the arrow
+    level (O(1) row count, O(k) row selection) to avoid loading 100GB+ into
+    memory before the main sampling pipeline runs.
+
+    Returns (df, load_meta) where load_meta may contain:
+        {"original_rows": N, "sampled_at_load": True}
+    or None if no pre-sampling was needed.
 
     Tries known keys (dataset, seq, train) in order; falls back to the first
     value that supports to_pandas(), or tries pd.DataFrame() as last resort.
     """
+    rng = np.random.default_rng(seed)
+    load_meta: Optional[Dict[str, Any]] = None
+
     # Try known key patterns
     for key in ("dataset", "seq", "train"):
-        if key in raw:
-            val = raw[key]
-            if hasattr(val, "to_pandas"):
-                return val.to_pandas()
-            if isinstance(val, pd.DataFrame):
-                return val
+        if key not in raw:
+            continue
+        val = raw[key]
 
-    # Try any iterable value from the dict
-    for val in raw.values():
-        if hasattr(val, "to_pandas"):
-            return val.to_pandas()
+        # Case 1: HuggingFace Dataset — pre-sample with .select()
+        if hasattr(val, "select") and hasattr(val, "to_pandas"):
+            total = len(val)
+            if total > max_rows:
+                indices = sorted(
+                    rng.choice(total, max_rows, replace=False).tolist()
+                )
+                val = val.select(indices)
+                load_meta = {"original_rows": total, "sampled_at_load": True}
+                logger.info(
+                    "Pre-sampled HuggingFace Dataset: %d → %d rows.",
+                    total,
+                    max_rows,
+                )
+            return val.to_pandas(), load_meta
+
+        # Case 2: pyarrow Table — pre-sample with .take()
+        if hasattr(val, "take") and hasattr(val, "to_pandas"):
+            total = len(val)
+            if total > max_rows:
+                import pyarrow as pa
+                idx_array = pa.array(
+                    rng.choice(total, max_rows, replace=False)
+                )
+                val = val.take(idx_array)
+                load_meta = {"original_rows": total, "sampled_at_load": True}
+                logger.info(
+                    "Pre-sampled pyarrow Table: %d → %d rows.",
+                    total,
+                    max_rows,
+                )
+            return val.to_pandas(), load_meta
+
+        # Case 3: Already a DataFrame — pass through
         if isinstance(val, pd.DataFrame):
-            return val
+            return val, None
 
-    # Last resort: try to construct a DataFrame directly
-    raise KeyError(f"Cannot extract DataFrame from _load_raw() dict. Available keys: {list(raw.keys())}")
+    # Try any value from the dict as last resort
+    for val in raw.values():
+        if hasattr(val, "select") and hasattr(val, "to_pandas"):
+            total = len(val)
+            if total > max_rows:
+                indices = sorted(
+                    rng.choice(total, max_rows, replace=False).tolist()
+                )
+                val = val.select(indices)
+                load_meta = {"original_rows": total, "sampled_at_load": True}
+            return val.to_pandas(), load_meta
+        if hasattr(val, "take") and hasattr(val, "to_pandas"):
+            total = len(val)
+            if total > max_rows:
+                import pyarrow as pa
+                idx_array = pa.array(
+                    rng.choice(total, max_rows, replace=False)
+                )
+                val = val.take(idx_array)
+                load_meta = {"original_rows": total, "sampled_at_load": True}
+            return val.to_pandas(), load_meta
+        if hasattr(val, "to_pandas"):
+            return val.to_pandas(), None
+        if isinstance(val, pd.DataFrame):
+            return val, None
+
+    # Last resort
+    raise KeyError(
+        f"Cannot extract DataFrame from _load_raw() dict. "
+        f"Available keys: {list(raw.keys())}"
+    )
 
 def _build_stats_json(
     overview: Any,
@@ -271,6 +343,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Optional version tag for multi-run retention (e.g. '20260617_174500').",
     )
     parser.add_argument(
+        "--load-sample",
+        type=float,
+        default=None,
+        help="Fraction of data to load (0.0-1.0). Overrides --max-rows for row count calculation.",
+    )
+    parser.add_argument(
         "--max-rows",
         type=int,
         default=500_000,
@@ -349,7 +427,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         try:
             ds_instance = ds_cls()
             raw = ds_instance._load_raw()
-            df = _extract_dataframe(raw)
+            df, load_meta = _extract_dataframe(
+                raw, max_rows=args.max_rows, seed=args.sample_seed
+            )
             logger.info("Loaded dataset '%s': %d rows.", args.dataset, len(df))
         except Exception as e:
             print(f"ERROR: Failed to load dataset '{args.dataset}': {e}", file=sys.stderr)
@@ -358,6 +438,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     elif args.dataset_path is not None:
         try:
             df = _load_dataframe(args.dataset_path)
+            load_meta = None
             logger.info("Loaded file '%s': %d rows.", args.dataset_path, len(df))
         except Exception as e:
             print(
@@ -378,9 +459,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Create a temporary SampleMetadata for path resolution
     # (actual sampling happens inside run_eda)
+    original_rows = load_meta["original_rows"] if load_meta else len(df)
+    load_sampled = bool(load_meta and load_meta.get("sampled_at_load"))
     temp_metadata = SampleMetadata(
         sample_strategy="pending",
-        total_rows=len(df),
+        total_rows=original_rows,
         sample_ratio=1.0,
         strat_rows=0,
         tail_rows=0,
@@ -397,6 +480,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         output_dir=args.output_dir,
         report_path=args.report_path,
         json_path=args.json_path,
+        load_sampled=load_sampled,
+        load_original_rows=original_rows,
     )
 
     logger.info(

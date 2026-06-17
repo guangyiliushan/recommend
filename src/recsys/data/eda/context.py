@@ -57,6 +57,8 @@ class RunContext:
     report_path: Path
     json_path: Optional[Path]
     assets_dir_rel: str
+    load_sampled: bool = False       # Whether pre-sampled at load time
+    load_original_rows: int = 0      # Original row count before load-time sampling
 
     @classmethod
     def from_args(
@@ -69,6 +71,8 @@ class RunContext:
         output_dir: Optional[str],
         report_path: Optional[str],
         json_path: Optional[str],
+        load_sampled: bool = False,
+        load_original_rows: int = 0,
     ) -> RunContext:
         """Build RunContext from CLI arguments.
 
@@ -150,6 +154,8 @@ class RunContext:
             report_path=report_path_resolved,
             json_path=json_path_resolved,
             assets_dir_rel=assets_dir_rel,
+            load_sampled=load_sampled,
+            load_original_rows=load_original_rows,
         )
 
 

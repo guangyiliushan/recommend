@@ -1,0 +1,96 @@
+{
+  "overview": {
+    "total_rows": 500000,
+    "total_columns": 2,
+    "column_groups": {
+      "core": [
+        "user_id"
+      ],
+      "user_feat": [],
+      "item_feat": [],
+      "domain_seq": [],
+      "other": [
+        "seq"
+      ]
+    },
+    "memory_usage_mb": 61.04,
+    "has_label": false,
+    "has_timestamp": false,
+    "suspected_multimodal_embeddings": [],
+    "skipped": false,
+    "skip_reason": null
+  },
+  "missing": {
+    "column_missing_rates": {
+      "user_id": 0.0,
+      "seq": 0.0
+    },
+    "overall_missing_rate": 0.0,
+    "co_missing_pairs": [],
+    "null_rate_by_label": null,
+    "coverage_matrix": {
+      "user_id": 1.0,
+      "seq": 1.0
+    },
+    "label_null_diff": [],
+    "skipped": false,
+    "skip_reason": null
+  },
+  "distribution": {
+    "label_distribution": {},
+    "feature_cardinality": {
+      "user_id": 500000,
+      "seq": 500000
+    },
+    "cardinality_bins": {
+      "1-10": 0,
+      "11-100": 0,
+      "101-1K": 0,
+      "1K-10K": 0,
+      "10K-100K": 0,
+      "100K+": 2
+    },
+    "dense_stats": {},
+    "skipped": false,
+    "skip_reason": null
+  },
+  "sequence": {
+    "domain_lengths": {},
+    "seq_repeat_rates": {},
+    "has_sequences": false,
+    "skipped": true,
+    "skip_reason": "No columns found matching pattern 'domain_'."
+  },
+  "effectiveness": {
+    "feature_auc": {},
+    "skipped_features": {},
+    "skipped": true,
+    "skip_reason": "Label column 'label_type' not found in DataFrame."
+  },
+  "user_item": {
+    "user_activity": {
+      "mean": 1.0,
+      "p50": 1.0,
+      "p75": 1.0,
+      "p95": 1.0,
+      "p99": 1.0,
+      "max": 1.0,
+      "total_users": 500000.0
+    },
+    "item_popularity": {},
+    "cross_domain_overlap": null,
+    "skipped": false,
+    "skip_reason": null
+  },
+  "sample_metadata": {
+    "sample_strategy": "none",
+    "total_rows": 500000,
+    "sample_ratio": 1.0,
+    "strat_rows": 500000,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": 500000,
+    "total_items": null
+  }
+}
