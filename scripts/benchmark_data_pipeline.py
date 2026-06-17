@@ -353,10 +353,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Resolve source
-    if args.source:
-        source_path = args.source
-    else:
-        source_path = _generate_synthetic_data(n_rows=args.rows)
+    source_path = args.source or _generate_synthetic_data(n_rows=args.rows)
 
     # Generate run ID
     run_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")

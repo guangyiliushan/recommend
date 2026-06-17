@@ -117,24 +117,34 @@ class ItemBasedCF(BaseRecommender):
     # 公开 API
     # ------------------------------------------------------------------
 
-    def fit(self, user_item_pairs: List[Tuple[int, int]]) -> "ItemBasedCF":
+    def fit(
+        self,
+        user_item_pairs: Optional[List[Tuple[int, int]]] = None,
+        user_items_dict: Optional[Dict[int, Set[int]]] = None,
+    ) -> "ItemBasedCF":
         """从训练交互数据构建物品相似度矩阵。
 
         Parameters
         ----------
-        user_item_pairs : list of (user_id, item_id)
+        user_item_pairs : list of (user_id, item_id), optional
             训练 split 中的正交互对。
             应由 dataset adapter 的 ``get_split("train")`` 提取后传入。
+        user_items_dict : dict of {user_id: set of item_ids}, optional
+            预分组的用户-物品映射。如果提供，则跳过分组步骤，
+            直接使用此映射构建共现矩阵。适用于大数据集优化。
 
         Returns
         -------
         self
         """
-        if not user_item_pairs:
-            raise ValueError("user_item_pairs 不能为空")
-
-        # 1. 组织 user → items 映射
-        user_items = _group_user_items(user_item_pairs)
+        if user_items_dict is not None:
+            user_items = user_items_dict
+        elif user_item_pairs is not None:
+            if not user_item_pairs:
+                raise ValueError("user_item_pairs 不能为空")
+            user_items = _group_user_items(user_item_pairs)
+        else:
+            raise ValueError("必须提供 user_item_pairs 或 user_items_dict 之一")
 
         # 2. 构建共现矩阵
         cooccurrence, item_counts = self._build_cooccurrence_matrix(user_items)

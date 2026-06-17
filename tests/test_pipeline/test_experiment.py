@@ -63,9 +63,29 @@ def test_run_experiment_itemcf_synthetic():
     assert has_ranking_metric, f"Expected ranking metrics, got: {result.summary_metrics}"
 
 
+def _is_dataset_cached(repo_id: str, variant: str) -> bool:
+    """检查 HF 数据集是否已有本地缓存。"""
+    import os as _os
+    cache_base = _os.path.expanduser("~/.cache/huggingface/datasets")
+    if not _os.path.isdir(cache_base):
+        return False
+    for root, dirs, _files in _os.walk(cache_base):
+        for d in dirs:
+            if variant in d and repo_id.replace("/", "___") in root:
+                return True
+    return False
+
+
 @pytest.mark.integration
-def test_run_experiment_itemcf_real(tmp_path):
+def test_run_experiment_itemcf_real(tmp_path, monkeypatch):
     """真实调 run_experiment(cfg)，验证产物完整。"""
+    # 离线模式：避免挂死在网络请求上
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+
+    # 跳过未缓存的数据集
+    if not _is_dataset_cached("TAAC2026", "data_sample_1000"):
+        pytest.skip("TAAC2026 data_sample_1000 未缓存，跳过（请在联网时先下载一次）")
+
     cfg = ExperimentConfig(
         experiment_name="test_itemcf",
         dataset_name="taac2026_data_sample",

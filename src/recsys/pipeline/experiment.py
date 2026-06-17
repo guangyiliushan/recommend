@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -444,7 +445,6 @@ def bootstrap_registries() -> None:
 
 def setup_runtime(runtime_config: Dict[str, Any]) -> None:
     """根据 runtime_config 设置 seed、device、日志级别等。"""
-    import logging
     import random
 
     import numpy as np
@@ -473,18 +473,31 @@ def setup_runtime(runtime_config: Dict[str, Any]) -> None:
 # 适配层 —— 从 dataset split 提取经典模型需要的交互数据
 # ============================================================================
 
+logger = logging.getLogger(__name__)
+
 def extract_interactions_from_split(split_dataset: Any) -> List[Tuple[int, int]]:
     """从 dataset split 中提取 (user_id, item_id) 列表。
 
     适用于 ItemCF、MF 等需要用户-物品交互对的经典方法。
     遍历 split 的每个样本，收集 user_id 和 item_id。
+
+    如果 split 提供 iter_user_item_pairs_fast() 方法（紧凑映射），
+    则走快速路径跳过逐个 __getitem__ 调用。
     """
+    # 快速路径：紧凑映射直接提取，避免 71M 次 __getitem__
+    if hasattr(split_dataset, "iter_user_item_pairs_fast"):
+        size = len(split_dataset)
+        logger.info(
+            "Extracting interactions via fast path (%d positions)",
+            size,
+        )
+        return list(split_dataset.iter_user_item_pairs_fast())
+
     pairs: List[Tuple[int, int]] = []
     for sample in split_dataset:
         uid = sample.get("user_id")
         iid = sample.get("item_id")
         if uid is not None and iid is not None:
-            # 处理 tensor 或标量
             uid_val = uid.item() if hasattr(uid, "item") else int(uid)
             iid_val = iid.item() if hasattr(iid, "item") else int(iid)
             pairs.append((uid_val, iid_val))
@@ -497,7 +510,12 @@ def extract_user_item_mapping_from_split(
     """从 dataset split 中提取 user_id -> set(item_ids) 映射。
 
     适用于 ItemCF.predict() 的用户历史触发和 ground truth 构造。
+    如果 split 提供 extract_user_item_mapping_fast() 方法，走快速路径。
     """
+    if hasattr(split_dataset, "extract_user_item_mapping_fast"):
+        logger.info("Extracting user-item mapping via fast path")
+        return split_dataset.extract_user_item_mapping_fast()
+
     mapping: Dict[int, Set[int]] = {}
     for sample in split_dataset:
         uid = sample.get("user_id")
@@ -593,21 +611,46 @@ def _execute_nontrainable_path(
     当前支持 interaction-group 适配：
     从 train split 提取交互对 → model.fit() →
     从 test split 提取映射 → model.predict() → PredictionBundle
+
+    优化：如果 split 提供 extract_user_item_mapping_fast()，直接传递
+    user_items_dict 给 model.fit()，跳过中间 List[Tuple] 转换。
     """
     train_split = dataset.get_split("train")
     test_split = dataset.get_split("test")
 
-    # 1. fit
-    train_pairs = extract_interactions_from_split(train_split)
-    if not train_pairs:
-        raise RuntimeError(
-            "无法从 train split 提取 (user_id, item_id) 交互对。"
-            "请确认数据集 schema 包含 user_id 和 item_id 字段。"
-        )
-    model.fit(train_pairs)
+    # 1. fit — 优先使用紧凑映射直接传递
+    if hasattr(train_split, "extract_user_item_mapping_fast"):
+        logger.info("Using compact user_items_dict for fit()")
+        train_mapping = train_split.extract_user_item_mapping_fast()
+        if not train_mapping:
+            raise RuntimeError(
+                "无法从 train split 提取用户-物品映射。"
+                "请确认数据集 schema 包含 user_id 和 item_id 字段。"
+            )
+        # 检查模型是否支持 user_items_dict 参数
+        import inspect
+        sig = inspect.signature(model.fit)
+        if "user_items_dict" in sig.parameters:
+            model.fit(user_items_dict=train_mapping)
+        else:
+            # 回退：转换为 List[Tuple]
+            logger.info("Model doesn't support user_items_dict, converting to pairs")
+            pairs = []
+            for uid, items in train_mapping.items():
+                for iid in items:
+                    pairs.append((uid, iid))
+            model.fit(user_item_pairs=pairs)
+    else:
+        train_pairs = extract_interactions_from_split(train_split)
+        if not train_pairs:
+            raise RuntimeError(
+                "无法从 train split 提取 (user_id, item_id) 交互对。"
+                "请确认数据集 schema 包含 user_id 和 item_id 字段。"
+            )
+        model.fit(user_item_pairs=train_pairs)
+        train_mapping = extract_user_item_mapping_from_split(train_split)
 
     # 2. predict
-    train_mapping = extract_user_item_mapping_from_split(train_split)
     test_mapping = extract_user_item_mapping_from_split(test_split)
 
     return model.predict(

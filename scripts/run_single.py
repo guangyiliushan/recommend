@@ -12,12 +12,11 @@ import argparse
 import json
 import sys
 
+# 触发数据集注册副作用（导入各 dataset adapter 以执行 @DATASET_REGISTRY.register()）
+import recsys.data.dataset_registry  # noqa: F401
 from recsys import auto_discover_models
 from recsys.core.registry import DATASET_REGISTRY, MODEL_REGISTRY
 from recsys.pipeline.experiment import ExperimentConfig, run_experiment
-
-# 触发数据集注册副作用（导入各 dataset adapter 以执行 @DATASET_REGISTRY.register()）
-import recsys.data.dataset_registry  # noqa: F401
 
 
 def build_parser() -> argparse.ArgumentParser:
