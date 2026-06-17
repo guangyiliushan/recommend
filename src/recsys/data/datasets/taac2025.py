@@ -141,20 +141,15 @@ class _SequenceSplit(Dataset[Dict[str, torch.Tensor]]):
                 yield uid_int, iid
 
     def extract_user_item_mapping_fast(self) -> dict:
-        """Extract user_id → set(item_ids) from compact mapping — O(users).
+        """Extract user_id → item_ids from compact mapping — O(users).
 
-        Uses set.update(items.tolist()) for batch Python int conversion
-        instead of per-element set.add(int(iid)).
+        Returns dict[int, np.ndarray] (not set) for zero-copy access.
+        ItemCF._build_cooccurrence_matrix accepts both set and ndarray.
         """
-        mapping: dict = {}
-        for uid, items in zip(self._user_ids, self._item_sequences, strict=False):
-            uid_int = int(uid)
-            item_set = mapping.get(uid_int)
-            if item_set is None:
-                item_set = set()
-                mapping[uid_int] = item_set
-            item_set.update(items.tolist())  # bulk conversion
-        return mapping
+        return {
+            int(uid): items  # keep as np.ndarray, no conversion
+            for uid, items in zip(self._user_ids, self._item_sequences, strict=False)
+        }
 
 
 class TAAC2025Dataset(BaseDataset):

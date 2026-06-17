@@ -650,11 +650,25 @@ def _execute_nontrainable_path(
         model.fit(user_item_pairs=train_pairs)
         train_mapping = extract_user_item_mapping_from_split(train_split)
 
-    # 2. predict
-    test_mapping = extract_user_item_mapping_from_split(test_split)
+    # 2. predict — 需要转换为 Set[int] 用于 O(1) 查找
+    if hasattr(test_split, "extract_user_item_mapping_fast"):
+        test_mapping_raw = test_split.extract_user_item_mapping_fast()
+        # 转换 np.ndarray → set
+        test_mapping = {
+            uid: set(items.tolist()) if hasattr(items, "tolist") else set(items)
+            for uid, items in test_mapping_raw.items()
+        }
+        # train_mapping 也需要转换为 set（用于 predict 中的过滤）
+        train_mapping_for_predict = {
+            uid: set(items.tolist()) if hasattr(items, "tolist") else set(items)
+            for uid, items in train_mapping.items()
+        }
+    else:
+        test_mapping = extract_user_item_mapping_from_split(test_split)
+        train_mapping_for_predict = train_mapping
 
     return model.predict(
-        user_train_items=train_mapping,
+        user_train_items=train_mapping_for_predict,
         user_test_items=test_mapping,
     )
 

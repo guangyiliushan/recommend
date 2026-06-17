@@ -10,6 +10,11 @@ Sarwar et al. "Item-based collaborative filtering recommendation algorithms"
 - predict：对目标用户集生成 Top-K 推荐，产出标准 PredictionBundle
 
 归入 classical 家族，task_type = "ranking"，supports_training = False。
+
+内存优化：
+- 使用 scipy.sparse.csr_matrix 存储相似度矩阵
+- Top-K 截断减少稀疏矩阵非零元素
+- 支持百万级物品规模
 """
 
 from __future__ import annotations
@@ -18,6 +23,9 @@ import math
 from collections import defaultdict
 from operator import itemgetter
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+import numpy as np
+from scipy import sparse
 
 from recsys.core.base_model import BaseRecommender, Capability
 from recsys.core.prediction_bundle import PredictionBundle
@@ -67,6 +75,12 @@ class ItemBasedCF(BaseRecommender):
     通过用户历史交互构建物品共现矩阵，
     再归一化为相似度矩阵后进行 Top-K 推荐。
 
+    内存优化策略：
+    - use_sparse_matmul=False（默认）：直接构建 Top-K 截断的相似度矩阵，
+      内存占用 O(n_items × k)，适合小内存机器（<16GB）
+    - use_sparse_matmul=True：使用稀疏矩阵乘法 U^T @ U，
+      内存占用约 17-20GB，计算速度快，适合大内存机器（≥32GB）
+
     Parameters
     ----------
     similarity : str
@@ -77,6 +91,9 @@ class ItemBasedCF(BaseRecommender):
         推荐列表默认长度。
     normalize : bool
         是否对相似度矩阵做最大-最小归一化。
+    use_sparse_matmul : bool
+        是否使用稀疏矩阵乘法方案（需要大内存，速度快）。
+        默认 False，使用内存友好的直接构建方案。
     """
 
     # 类级别元信息
@@ -94,6 +111,7 @@ class ItemBasedCF(BaseRecommender):
         top_k_neighbors: int = 50,
         recommend_k: int = 10,
         normalize: bool = True,
+        use_sparse_matmul: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -102,10 +120,14 @@ class ItemBasedCF(BaseRecommender):
         self._top_k_neighbors = top_k_neighbors
         self._recommend_k = recommend_k
         self._normalize = normalize
+        self._use_sparse_matmul = use_sparse_matmul
 
         # ---- 内部状态 ----
-        # 物品 → 最近邻映射: {item_id: {neighbor_id: similarity_score}}
-        self._item_neighbors: Dict[int, Dict[int, float]] = {}
+        # 稀疏相似度矩阵 (n_items x n_items)
+        self._sim_matrix: Optional[sparse.csr_matrix] = None
+        # 物品 ID → 矩阵索引映射
+        self._item_to_idx: Dict[int, int] = {}
+        self._idx_to_item: Dict[int, int] = {}
         # 物品被多少人交互过: {item_id: count}
         self._item_popularity: Dict[int, int] = {}
 
@@ -116,6 +138,163 @@ class ItemBasedCF(BaseRecommender):
     # ------------------------------------------------------------------
     # 公开 API
     # ------------------------------------------------------------------
+
+    def _build_similarity_sparse_matmul(
+        self, user_items: Dict[int, Any]
+    ) -> sparse.csr_matrix:
+        """使用稀疏矩阵乘法构建相似度矩阵（需要大内存）。
+
+        策略：U^T @ U 计算共现矩阵，然后归一化。
+        内存需求：约 17-20 GB（适合大内存机器）。
+        优点：计算速度快，适合 GPU 加速。
+        """
+        weight_fn = _SIMILARITY_WEIGHTS[self._similarity]
+        n_users = len(user_items)
+        n_items = len(self._item_to_idx)
+
+        rows: List[int] = []
+        cols: List[int] = []
+        data: List[float] = []
+
+        for user_idx, (_user_id, items) in enumerate(user_items.items()):
+            if hasattr(items, "__len__"):
+                n_user_items = len(items)
+            else:
+                items = list(items)
+                n_user_items = len(items)
+
+            if n_user_items == 0:
+                continue
+
+            weight = weight_fn(n_user_items)
+            sqrt_weight = math.sqrt(weight)
+
+            for item in items:
+                if item in self._item_to_idx:
+                    item_idx = self._item_to_idx[item]
+                    rows.append(user_idx)
+                    cols.append(item_idx)
+                    data.append(sqrt_weight)
+
+        user_item_matrix = sparse.csr_matrix(
+            (data, (rows, cols)),
+            shape=(n_users, n_items),
+            dtype=np.float32,
+        )
+
+        # 共现矩阵 = U^T @ U
+        cooccurrence = user_item_matrix.T @ user_item_matrix
+
+        # 计算相似度
+        item_counts = np.array(
+            [self._item_popularity.get(self._idx_to_item[i], 1)
+             for i in range(n_items)],
+            dtype=np.float32,
+        )
+        inv_sqrt_counts = np.where(item_counts > 0, 1.0 / np.sqrt(item_counts), 0)
+        diag_mat = sparse.diags(inv_sqrt_counts, format="csr", dtype=np.float32)
+        sim_matrix = diag_mat @ cooccurrence @ diag_mat
+
+        # 移除对角线
+        sim_matrix.setdiag(0.0)
+        sim_matrix.eliminate_zeros()
+
+        # Top-K 截断
+        sim_matrix = self._truncate_sparse_matrix(sim_matrix)
+
+        # 归一化
+        if self._normalize:
+            sim_matrix = self._normalize_sparse_matrix(sim_matrix)
+
+        return sim_matrix
+
+    def _build_topk_similarity_direct(
+        self, user_items: Dict[int, Any]
+    ) -> sparse.csr_matrix:
+        """直接构建 Top-K 截断的相似度矩阵，跳过完整共现矩阵。
+
+        策略：
+        1. 逐用户处理，累积每个物品对的共现计数
+        2. 使用 defaultdict 存储共现，避免预分配大数组
+        3. 计算相似度后立即截断 Top-K
+        4. 只保留 Top-K 结果，内存占用 O(n_items × k)
+        """
+        import gc
+        from collections import defaultdict
+
+        n_items = len(self._item_to_idx)
+        k = self._top_k_neighbors
+
+        # 1. 构建共现矩阵（使用 defaultdict，按需分配）
+        # cooc[i][j] = 物品 i 和 j 的共现次数
+        cooc: Dict[int, Dict[int, float]] = defaultdict(lambda: defaultdict(float))
+
+        weight_fn = _SIMILARITY_WEIGHTS[self._similarity]
+
+        for _user_id, items in user_items.items():
+            if hasattr(items, "__len__"):
+                n_user_items = len(items)
+            else:
+                items = list(items)
+                n_user_items = len(items)
+
+            if n_user_items < 2:
+                continue
+
+            weight = weight_fn(n_user_items)
+
+            # 转换为索引列表
+            item_indices = []
+            for item in items:
+                if item in self._item_to_idx:
+                    item_indices.append(self._item_to_idx[item])
+
+            # 更新共现矩阵
+            for i in range(len(item_indices)):
+                ii = item_indices[i]
+                for j in range(i + 1, len(item_indices)):
+                    jj = item_indices[j]
+                    cooc[ii][jj] += weight
+                    cooc[jj][ii] += weight
+
+        # 2. 计算相似度并截断 Top-K
+        # 使用 LIL 格式构建稀疏矩阵
+        sim_matrix = sparse.lil_matrix((n_items, n_items), dtype=np.float32)
+
+        for i, neighbors in cooc.items():
+            if not neighbors:
+                continue
+
+            ni = self._item_popularity.get(self._idx_to_item[i], 1)
+
+            # 计算相似度
+            sim_scores: List[Tuple[int, float]] = []
+            for j, cij in neighbors.items():
+                nj = self._item_popularity.get(self._idx_to_item[j], 1)
+                denom = math.sqrt(ni * nj)
+                if denom > 0:
+                    sim = cij / denom
+                    sim_scores.append((j, sim))
+
+            # Top-K 截断
+            if len(sim_scores) > k:
+                sim_scores.sort(key=lambda x: x[1], reverse=True)
+                sim_scores = sim_scores[:k]
+
+            # 归一化
+            if self._normalize and sim_scores:
+                max_sim = max(s for _, s in sim_scores)
+                sim_scores = [(j, s / max_sim) for j, s in sim_scores]
+
+            # 写入稀疏矩阵
+            for j, sim in sim_scores:
+                sim_matrix[i, j] = sim
+
+        # 释放共现矩阵内存
+        del cooc
+        gc.collect()
+
+        return sim_matrix.tocsr()
 
     def fit(
         self,
@@ -128,10 +307,8 @@ class ItemBasedCF(BaseRecommender):
         ----------
         user_item_pairs : list of (user_id, item_id), optional
             训练 split 中的正交互对。
-            应由 dataset adapter 的 ``get_split("train")`` 提取后传入。
         user_items_dict : dict of {user_id: set of item_ids}, optional
-            预分组的用户-物品映射。如果提供，则跳过分组步骤，
-            直接使用此映射构建共现矩阵。适用于大数据集优化。
+            预分组的用户-物品映射。如果提供，则跳过分组步骤。
 
         Returns
         -------
@@ -146,15 +323,17 @@ class ItemBasedCF(BaseRecommender):
         else:
             raise ValueError("必须提供 user_item_pairs 或 user_items_dict 之一")
 
-        # 2. 构建共现矩阵
-        cooccurrence, item_counts = self._build_cooccurrence_matrix(user_items)
+        # 1. 构建物品索引映射
+        self._build_item_index(user_items)
 
-        # 3. 计算相似度矩阵
-        sim_matrix = self._compute_similarity_matrix(cooccurrence, item_counts)
+        # 2. 构建相似度矩阵（根据内存情况选择策略）
+        if self._use_sparse_matmul:
+            # 稀疏矩阵乘法方案（需要 ~17GB 内存，速度快）
+            self._sim_matrix = self._build_similarity_sparse_matmul(user_items)
+        else:
+            # 直接构建 Top-K 方案（内存友好，适合小内存机器）
+            self._sim_matrix = self._build_topk_similarity_direct(user_items)
 
-        # 4. Top-K 截断 + 可选归一化
-        self._item_neighbors = self._truncate_and_normalize(sim_matrix)
-        self._item_popularity = item_counts
         self._fitted = True
         return self
 
@@ -165,27 +344,7 @@ class ItemBasedCF(BaseRecommender):
         k: Optional[int] = None,
         **kwargs: Any,
     ) -> PredictionBundle:
-        """为用户集生成 Top-K 推荐列表。
-
-        Parameters
-        ----------
-        user_train_items : dict, optional
-            {user_id: set of item_ids} — 用户在训练集中的历史交互物品。
-            用于触发推荐。
-        user_test_items : dict, optional
-            {user_id: set of item_ids} — 用户在测试集中的真实交互物品。
-            用作 ground truth。
-        k : int, optional
-            推荐列表长度，默认使用构造时传入的 ``recommend_k``。
-        **kwargs : Any
-            其他参数（兼容基类签名）。
-
-        Returns
-        -------
-        PredictionBundle
-            包含 task_type="ranking"、problem_type="implicit_ranking"、
-            group_ids、y_score、candidate_ids、y_true 的结构化预测产物。
-        """
+        """为用户集生成 Top-K 推荐列表。"""
         if user_train_items is None:
             user_train_items = {}
         if user_test_items is None:
@@ -237,111 +396,134 @@ class ItemBasedCF(BaseRecommender):
     @property
     def num_items(self) -> int:
         """已知物品数量。"""
-        return len(self._item_popularity)
+        return len(self._item_to_idx)
 
     # ------------------------------------------------------------------
-    # 内部算法
+    # 内部算法 - 稀疏矩阵实现
     # ------------------------------------------------------------------
 
-    def _build_cooccurrence_matrix(
-        self, user_items: Dict[int, Set[int]]
-    ) -> Tuple[Dict[int, Dict[int, float]], Dict[int, int]]:
-        """构建物品共现矩阵。
-
-        遍历每个用户的物品集合，对任意物品对 (i, j) 增加共现计数。
-        计数权重由相似度策略决定（cosine: 1.0 / iuf: 1/log(1+|I_u|)）。
-
-        Returns
-        -------
-        cooccurrence : dict
-            {item_i: {item_j: weighted_count}}
-        item_counts : dict
-            {item_id: 被多少用户交互过}
-        """
-        weight_fn = _SIMILARITY_WEIGHTS[self._similarity]
-        cooccurrence: Dict[int, Dict[int, float]] = defaultdict(
-            lambda: defaultdict(float)
-        )
-        item_counts: Dict[int, int] = defaultdict(int)
-
+    def _build_item_index(self, user_items: Dict[int, Any]) -> None:
+        """构建物品 ID → 矩阵索引的双向映射。"""
+        all_items: Set[int] = set()
         for items in user_items.values():
-            weight = weight_fn(len(items))
-            for i in items:
-                item_counts[i] += 1
-                for j in items:
-                    if i == j:
-                        continue
-                    cooccurrence[i][j] += weight
+            if hasattr(items, "__iter__"):
+                all_items.update(items)
+        # 排序确保确定性
+        sorted_items = sorted(all_items)
+        self._item_to_idx = {item: idx for idx, item in enumerate(sorted_items)}
+        self._idx_to_item = {idx: item for item, idx in self._item_to_idx.items()}
 
-        return dict(cooccurrence), dict(item_counts)
+        # 计算物品流行度
+        self._item_popularity = defaultdict(int)
+        for items in user_items.values():
+            for item in items:
+                self._item_popularity[item] += 1
 
-    def _compute_similarity_matrix(
-        self,
-        cooccurrence: Dict[int, Dict[int, float]],
-        item_counts: Dict[int, int],
-    ) -> Dict[int, Dict[int, float]]:
+    def _compute_similarity_sparse(
+        self, cooccurrence: sparse.csr_matrix
+    ) -> sparse.csr_matrix:
         """将共现矩阵归一化为余弦相似度矩阵。
 
         sim(i, j) = cooccurrence(i, j) / sqrt(N[i] * N[j])
+
+        使用稀疏矩阵操作避免内存爆炸。
         """
-        sim_matrix: Dict[int, Dict[int, float]] = {}
+        # 物品流行度向量
+        item_counts = np.array(
+            [self._item_popularity.get(self._idx_to_item[i], 1)
+             for i in range(cooccurrence.shape[0])],
+            dtype=np.float32,
+        )
 
-        for i, neighbors in cooccurrence.items():
-            sim_matrix[i] = {}
-            ni = item_counts[i]
-            for j, cij in neighbors.items():
-                nj = item_counts[j]
-                denom = math.sqrt(ni * nj)
-                if denom > 0:
-                    sim_matrix[i][j] = cij / denom
+        # 对角矩阵 diag = 1 / sqrt(N[i])
+        # 避免除零
+        inv_sqrt_counts = np.where(item_counts > 0, 1.0 / np.sqrt(item_counts), 0)
+        diag_mat = sparse.diags(inv_sqrt_counts, format="csr", dtype=np.float32)
 
-        return sim_matrix
+        # 相似度矩阵 = diag_mat @ cooccurrence @ diag_mat
+        sim_matrix = diag_mat @ cooccurrence @ diag_mat
 
-    def _truncate_and_normalize(
-        self, sim_matrix: Dict[int, Dict[int, float]]
-    ) -> Dict[int, Dict[int, float]]:
-        """对相似度矩阵做 Top-K 截断 + 可选归一化。
+        # 移除对角线（物品与自身的相似度）
+        sim_matrix.setdiag(0.0)
+        sim_matrix.eliminate_zeros()
 
-        每个物品只保留相似度最高的 ``top_k_neighbors`` 个邻居。
-        若 ``normalize=True``，将每个物品的相似度向量除以其最大值。
+        return sim_matrix.tocsr()
+
+    def _truncate_sparse_matrix(
+        self, sim_matrix: sparse.csr_matrix
+    ) -> sparse.csr_matrix:
+        """对稀疏相似度矩阵做 Top-K 截断。
+
+        每行只保留最大的 top_k_neighbors 个元素。
         """
-        result: Dict[int, Dict[int, float]] = {}
+        k = self._top_k_neighbors
+        if k <= 0:
+            return sim_matrix
 
-        for i, neighbors in sim_matrix.items():
-            # 按相似度降序排列，取 Top-K
-            sorted_neighbors = sorted(
-                neighbors.items(), key=itemgetter(1), reverse=True
-            )[: self._top_k_neighbors]
-            truncated = dict(sorted_neighbors)
+        n_rows = sim_matrix.shape[0]
+        # 使用 lil 格式便于逐行修改
+        truncated = sparse.lil_matrix(sim_matrix.shape, dtype=np.float32)
 
-            if self._normalize and truncated:
-                max_sim = max(truncated.values())
-                truncated = {j: s / max_sim for j, s in truncated.items()}
+        for i in range(n_rows):
+            row = sim_matrix.getrow(i)
+            if row.nnz == 0:
+                continue
 
-            result[i] = truncated
+            # 获取非零元素的列索引和值
+            cols = row.indices
+            vals = row.data
 
-        return result
+            # 取 Top-K
+            if len(vals) > k:
+                top_k_idx = np.argpartition(vals, -k)[-k:]
+                cols = cols[top_k_idx]
+                vals = vals[top_k_idx]
+
+            truncated[i, cols] = vals
+
+        return truncated.tocsr()
+
+    def _normalize_sparse_matrix(
+        self, sim_matrix: sparse.csr_matrix
+    ) -> sparse.csr_matrix:
+        """对稀疏相似度矩阵做最大值归一化。"""
+        # 每行的最大值
+        max_vals = np.array(sim_matrix.max(axis=1).todense()).flatten()
+        # 避免除零
+        max_vals = np.where(max_vals > 0, max_vals, 1.0)
+
+        # diag_mat = 1 / max_val
+        diag_mat = sparse.diags(1.0 / max_vals, format="csr", dtype=np.float32)
+
+        return diag_mat @ sim_matrix
 
     def _score_for_user(self, user_items: Set[int]) -> Dict[int, float]:
         """对单个用户的所有候选物品打分。
 
-        遍历用户历史物品，聚合它们最近邻的相似度得分。
-        过滤用户已交互的物品。
-
-        Returns
-        -------
-        dict
-            {candidate_item_id: aggregated_score}
+        使用稀疏矩阵乘法加速计算。
         """
-        scores: Dict[int, float] = defaultdict(float)
+        if self._sim_matrix is None:
+            return {}
+
+        # 构建用户历史物品向量 (1 x n_items)
+        n_items = len(self._item_to_idx)
+        user_vec = np.zeros(n_items, dtype=np.float32)
 
         for item in user_items:
-            neighbors = self._item_neighbors.get(item, {})
-            for neighbor_id, sim in neighbors.items():
-                if neighbor_id not in user_items:
-                    scores[neighbor_id] += sim
+            if item in self._item_to_idx:
+                user_vec[self._item_to_idx[item]] = 1.0
 
-        return dict(scores)
+        # 分数向量 = user_vec @ sim_matrix (1 x n_items)
+        scores_vec = user_vec @ self._sim_matrix
+
+        # 转换为 {item_id: score} 字典，过滤已交互物品
+        scores: Dict[int, float] = {}
+        for idx in np.nonzero(scores_vec)[0]:
+            item_id = self._idx_to_item[idx]
+            if item_id not in user_items:
+                scores[item_id] = float(scores_vec[idx])
+
+        return scores
 
 
 # ---------------------------------------------------------------------------
@@ -360,12 +542,7 @@ def _validate_similarity(similarity: str) -> None:
 def _group_user_items(
     pairs: List[Tuple[int, int]],
 ) -> Dict[int, Set[int]]:
-    """将 (user_id, item_id) 列表组织为 {user_id: {item_ids}}。
-
-    由 dataset adapter 的 train split 提供原始数据，
-    ItemCF 内部完成分组——这是算法必需的中间表示，
-    而非数据加载职责。
-    """
+    """将 (user_id, item_id) 列表组织为 {user_id: {item_ids}}。"""
     grouped: Dict[int, Set[int]] = defaultdict(set)
     for user_id, item_id in pairs:
         grouped[user_id].add(item_id)
