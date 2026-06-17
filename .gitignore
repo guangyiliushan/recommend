@@ -120,6 +120,11 @@ dmypy.json
 *.pid
 *.pyre
 
+# graphify
+
+graphify-out/
+.graphify_*.json
+
 # IDE
 
 .vscode/
