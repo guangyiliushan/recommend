@@ -24,6 +24,7 @@ import hashlib
 import json
 import logging
 import traceback
+import tracemalloc
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -178,6 +179,9 @@ class ExperimentRunMeta:
     started_at: str = ""
     finished_at: str = ""
     duration_seconds: float = 0.0
+
+    # 内存指标（v2 新增）
+    peak_memory_mb: Optional[float] = None
 
     # 数据指标
     num_users: int = 0
@@ -841,6 +845,9 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             result.error = err
             raise  # 重新抛出，由最外层统一捕获
 
+    # 初始化内存追踪变量（在 try 块外定义，异常时默认为 None）
+    peak_memory_mb = None
+
     try:
         # ---- 2. registry bootstrap ----
         _run_phase(ExperimentPhase.BOOTSTRAP, bootstrap_registries)
@@ -897,10 +904,15 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         model = _run_phase(ExperimentPhase.MODEL, _build_model)
 
         # ---- 8. training / prediction ----
+        # 使用 tracemalloc 捕获峰值内存
+        tracemalloc.start()
         bundle = _run_phase(
             ExperimentPhase.TRAINING,
             lambda: route_execution(model, dataset, config),
         )
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_memory_mb = peak_bytes / (1024 * 1024) if peak_bytes > 0 else None
 
         # ---- 9. evaluation ----
         def _run_evaluation() -> EvaluationResult:
@@ -999,6 +1011,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         result.metadata.update({
             "finished_at": finished_at,
             "duration_seconds": duration,
+            "peak_memory_mb": peak_memory_mb,  # v2: tracemalloc 峰值内存
             "primary_metric": primary_metric,
             "primary_metric_value": primary_value,
             "num_samples": bundle.num_samples,

@@ -17,6 +17,7 @@ All registries gracefully handle missing optional dependencies.
 # ---- Data backend discovery -------------------------------------------
 from typing import Any, Dict, List, Optional
 
+import recsys.data.datasets.synthetic  # noqa: F401 — 合成数据集适配器
 import recsys.data.datasets.taac2025  # noqa: F401
 import recsys.data.datasets.taac2026  # noqa: F401
 from recsys.core.registry import DATASET_REGISTRY  # noqa: F401

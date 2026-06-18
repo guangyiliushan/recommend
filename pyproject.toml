@@ -140,6 +140,7 @@ recbench = { workspace = true }
 [dependency-groups]
 dev = [
     "pytest>=9.1.0",
+    "pytest-benchmark>=4.0.0",
     "recbench",
     "ruff>=0.15.17",
 ]
