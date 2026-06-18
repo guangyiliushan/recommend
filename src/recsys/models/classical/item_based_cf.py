@@ -44,6 +44,7 @@ WWW10, May 1-5, 2001, Hong Kong
 
 from __future__ import annotations
 
+import logging
 import math
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -57,6 +58,8 @@ from recsys.core.base_model import BaseRecommender, Capability
 from recsys.core.prediction_bundle import PredictionBundle
 from recsys.core.registry import MODEL_REGISTRY
 from recsys.utils.progress import progress_phase
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # 相似度策略抽象类与实现（论文 §3.1）
@@ -142,6 +145,7 @@ class _CosineSimilarityStrategy(SimilarityStrategy):
         # --- 2. 共现矩阵 = R^T @ R（scipy C 级稀疏矩阵乘法）---
         cooc = (r_mat.T @ r_mat).tocsr()
         cooc.setdiag(0)  # 对角线置零
+        cooc.eliminate_zeros()  # 消除 setdiag 产生的零元素，使 data 与 nonzero() 对齐
 
         # --- 3. 归一化为余弦相似度 ---
         pop_arr = np.array(
@@ -150,12 +154,11 @@ class _CosineSimilarityStrategy(SimilarityStrategy):
         )
         pop_sqrt = np.sqrt(pop_arr)
 
-        # 仅对非零元素除以分母
+        # 仅对非零元素除以分母（向量化，避免 Python 循环）
         cx, cy = cooc.nonzero()
-        for x, y in zip(cx, cy, strict=True):
-            denom = pop_sqrt[x] * pop_sqrt[y]
-            if denom > 0:
-                cooc[x, y] /= denom
+        denom_vals = pop_sqrt[cx] * pop_sqrt[cy]
+        nonzero_mask = denom_vals > 0
+        cooc.data[nonzero_mask] /= denom_vals[nonzero_mask]
 
         # --- 4. 每行 Top-K 截断 ---
         return _truncate_topk_per_row(cooc, top_k)
@@ -369,7 +372,8 @@ class _IUFCosineSimilarityStrategy(SimilarityStrategy):
         for u_idx, items in enumerate(user_items.values()):
             items_list = list(items) if hasattr(items, "__iter__") else [items]
 
-            if len(items_list) == 0:
+            # 跳过交互过少的用户（与原实现保持数值等价）
+            if len(items_list) < 2:
                 continue
 
             # IUF 权重：1 / log(1 + n)
@@ -393,6 +397,7 @@ class _IUFCosineSimilarityStrategy(SimilarityStrategy):
         # --- 2. 加权共现矩阵 = R^T @ R ---
         cooc = (r_mat.T @ r_mat).tocsr()
         cooc.setdiag(0)
+        cooc.eliminate_zeros()  # 消除 setdiag 产生的零元素，使 data 与 nonzero() 对齐
 
         # --- 3. 归一化为余弦相似度 ---
         pop_arr = np.array(
@@ -401,11 +406,11 @@ class _IUFCosineSimilarityStrategy(SimilarityStrategy):
         )
         pop_sqrt = np.sqrt(pop_arr)
 
+        # 向量化除以分母（避免 Python 循环）
         cx, cy = cooc.nonzero()
-        for x, y in zip(cx, cy, strict=True):
-            denom = pop_sqrt[x] * pop_sqrt[y]
-            if denom > 0:
-                cooc[x, y] /= denom
+        denom_vals = pop_sqrt[cx] * pop_sqrt[cy]
+        nonzero_mask = denom_vals > 0
+        cooc.data[nonzero_mask] /= denom_vals[nonzero_mask]
 
         # --- 4. 每行 Top-K 截断 ---
         return _truncate_topk_per_row(cooc, top_k)
@@ -853,6 +858,26 @@ class ItemBasedCF(BaseRecommender):
                 y_true.append(list(user_test_items.get(user_id, set())))
                 pbar.update(1)
 
+        # 空结果保护：当所有用户均无法生成有效推荐时（数据过于稀疏
+        # 或用户历史物品间无共现关系），返回标准化空 Bundle 而非崩溃。
+        if not group_ids:
+            logger.warning(
+                "ItemCF predict 产出空结果: 输入 %d 用户，%d 物品，"
+                "无用户可生成有效推荐（数据过于稀疏或无共现关系）",
+                len(user_train_items), len(self._item_to_idx),
+            )
+            return self.export_prediction_bundle(
+                y_true=[[]], y_score=[[]], group_ids=[], candidate_ids=[[]],
+                score_type="raw_score", k_list=[k],
+                metadata={
+                    "similarity": self._similarity,
+                    "top_k_neighbors": self._top_k_neighbors,
+                    "prediction_method": self._prediction_method,
+                    "problem_type": self.problem_type,
+                    "num_users": 0,
+                },
+            )
+
         return self.export_prediction_bundle(
             y_true=y_true,
             y_score=y_score,
@@ -951,6 +976,14 @@ class ItemBasedCF(BaseRecommender):
         if self._sim_matrix is None or self._regression_coeffs is None:
             return {}
 
+        # Regression 预测未完整实现（存根）：回退到 weighted_sum 行为
+        from loguru import logger
+        logger.warning(
+            "Regression 预测方法未完整实现（回归系数为空），"
+            "当前回退到 weighted_sum 行为。如需完整 Regression，请实现 "
+            "_precompute_regression_coefficients 的线性回归拟合。"
+        )
+
         # 构建用户历史物品向量 (1 x n_items)
         n_items = len(self._item_to_idx)
         user_vec = np.zeros(n_items, dtype=np.float32)
@@ -959,20 +992,26 @@ class ItemBasedCF(BaseRecommender):
             if item in self._item_to_idx:
                 user_vec[self._item_to_idx[item]] = 1.0
 
-        # 分子：加权回归预测
+        # 分子：加权求和（回退到 weighted_sum）
         scores_vec = user_vec @ self._sim_matrix
 
-        # 分母：绝对值求和
-        np.abs(user_vec) @ np.abs(self._sim_matrix)
+        # 分母：绝对值求和（使用预计算的 abs_sim_matrix）
+        abs_weight_sums = np.abs(user_vec) @ self._abs_sim_matrix
+
+        # 归一化（避免除零）
+        with np.errstate(divide='ignore', invalid='ignore'):
+            normalized_scores = np.divide(
+                scores_vec, abs_weight_sums,
+                out=np.full_like(scores_vec, 0.0),
+                where=abs_weight_sums != 0,
+            )
 
         # 转换为 {item_id: score} 字典，过滤已交互物品
         scores: Dict[int, float] = {}
-
-        for idx in np.nonzero(scores_vec)[0]:
+        for idx in np.nonzero(normalized_scores)[0]:
             item_id = self._idx_to_item[idx]
             if item_id not in user_items:
-                # 这里简化处理，实际需要遍历邻居计算回归预测
-                scores[item_id] = float(scores_vec[idx])
+                scores[item_id] = float(normalized_scores[idx])
 
         return scores
 

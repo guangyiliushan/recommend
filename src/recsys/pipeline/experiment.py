@@ -672,10 +672,19 @@ def _execute_nontrainable_path(
         test_mapping = extract_user_item_mapping_from_split(test_split)
         train_mapping_for_predict = train_mapping
 
-    return model.predict(
+    bundle = model.predict(
         user_train_items=train_mapping_for_predict,
         user_test_items=test_mapping,
     )
+
+    if bundle.task_type == "ranking" and not bundle.group_ids:
+        logger.warning(
+            "模型 %s 在数据集 %s 上产出空预测结果（无 group_ids），"
+            "可能因数据过于稀疏或用户历史与候选池无共现",
+            config.model_name, config.dataset_name,
+        )
+
+    return bundle
 
 
 def _assemble_bundle_from_predictions(

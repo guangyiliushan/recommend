@@ -173,6 +173,34 @@ class _TabularSplit(Dataset[Dict[str, torch.Tensor]]):
             ),
         }
 
+    def iter_user_item_pairs_fast(self):
+        """快速迭代 (user_id, item_id) 对 — O(rows)，零 tensor 分配。
+
+        直接从原始字典提取，跳过 __getitem__ 的 tensor 构造开销。
+        供实验管线 `_execute_nontrainable_path` 调用。
+        """
+        for row in self._rows:
+            yield _safe_int(row.get("user_id")), _safe_int(row.get("item_id"))
+
+    def extract_user_item_mapping_fast(self) -> dict:
+        """快速提取 user_id → set(item_ids) 映射 — O(rows)。
+
+        供实验管线 `_execute_nontrainable_path` 调用。
+        与 TAAC2025 的 `_SequenceSplit.extract_user_item_mapping_fast` 对齐。
+
+        Returns
+        -------
+        dict[int, set[int]]
+            用户到物品集合的映射。
+        """
+        from collections import defaultdict
+        mapping: dict = defaultdict(set)
+        for row in self._rows:
+            mapping[_safe_int(row.get("user_id"))].add(
+                _safe_int(row.get("item_id"))
+            )
+        return dict(mapping)
+
 
 class TAAC2026Dataset(BaseDataset):
     """TAAC 2026 advertising recommendation sample dataset.

@@ -243,3 +243,87 @@ def test_itemcf_progress_silent_by_default():
         for _ in range(5):
             p.update(1)
     # 无异常即为通过
+
+
+# ---------------------------------------------------------------------------
+# 空结果健壮性测试（v2 — 防止 ModelContractError 崩溃）
+# ---------------------------------------------------------------------------
+
+def test_itemcf_predict_empty_sparse_users():
+    """所有用户各自拥有无共现的独立物品 → predict 不崩溃，返回空 Bundle。"""
+    from recsys.models.classical.item_based_cf import ItemBasedCF
+
+    model = ItemBasedCF(similarity="cosine", top_k_neighbors=10, recommend_k=5)
+
+    # 3 个用户，每个用户只有一个独特物品，物品间无任何共现
+    user_item_pairs = [
+        (0, 0),
+        (1, 1),
+        (2, 2),
+    ]
+    model.fit(user_item_pairs)
+
+    user_train = {0: {0}, 1: {1}, 2: {2}}
+    user_test = {0: {1}, 1: {2}, 2: {0}}
+
+    bundle = model.predict(
+        user_train_items=user_train,
+        user_test_items=user_test,
+    )
+    # 应该返回有效 PredictionBundle，不崩溃
+    assert bundle is not None
+    assert bundle.task_type == "ranking"
+    assert isinstance(bundle.y_true, list)
+    assert isinstance(bundle.y_score, list)
+    # 空结果场景：y_true 应为 [[]] 格式（含一个空子列表，truthy）
+    assert len(bundle.y_true) > 0
+
+
+def test_itemcf_predict_all_items_filtered():
+    """候选物品全在用户训练集中（全部被过滤）→ predict 不崩溃。"""
+    from recsys.models.classical.item_based_cf import ItemBasedCF
+
+    model = ItemBasedCF(similarity="cosine", top_k_neighbors=10, recommend_k=5)
+
+    user_item_pairs = [
+        (0, 0), (0, 1), (0, 2),
+        (1, 0), (1, 1), (1, 2),
+    ]
+    model.fit(user_item_pairs)
+
+    # 训练集包含全部 3 个物品，无新物品可推荐
+    user_train = {0: {0, 1, 2}}
+    user_test = {0: {3}}  # 测试物品 3 不存在于数据集
+
+    bundle = model.predict(
+        user_train_items=user_train,
+        user_test_items=user_test,
+    )
+    assert bundle is not None
+    assert bundle.task_type == "ranking"
+    assert isinstance(bundle.y_true, list)
+    assert isinstance(bundle.y_score, list)
+    assert len(bundle.y_true) > 0
+
+
+def test_itemcf_predict_single_user_no_cooccurrence():
+    """单用户、单物品、无任何共现 → predict 不崩溃。"""
+    from recsys.models.classical.item_based_cf import ItemBasedCF
+
+    model = ItemBasedCF(similarity="cosine", top_k_neighbors=10, recommend_k=5)
+
+    user_item_pairs = [(0, 0)]
+    model.fit(user_item_pairs)
+
+    user_train = {0: {0}}
+    user_test = {0: {1}}
+
+    bundle = model.predict(
+        user_train_items=user_train,
+        user_test_items=user_test,
+    )
+    assert bundle is not None
+    assert bundle.task_type == "ranking"
+    assert isinstance(bundle.y_true, list)
+    assert isinstance(bundle.y_score, list)
+    assert len(bundle.y_true) > 0
