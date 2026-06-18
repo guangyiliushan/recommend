@@ -90,6 +90,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="禁用曲线生成",
     )
 
+    # 数据参数
+    data_group = parser.add_argument_group("Data")
+    data_group.add_argument(
+        "--min-action-type",
+        type=int,
+        default=0,
+        help="最小行为类型 (0=全部, 1=仅点击) — TAAC2025 隐式反馈推荐建议设为 1",
+    )
+
     # 运行时参数
     runtime_group = parser.add_argument_group("Runtime")
     runtime_group.add_argument("--device", default="auto", help="设备 (默认: auto)")
@@ -126,7 +135,7 @@ def main() -> None:
         model_name=args.model,
         seed=args.seed,
         output_dir=args.output_dir,
-        data_config={"root_dir": args.data_root},
+        data_config={"root_dir": args.data_root, "min_action_type": args.min_action_type},
         training_config={
             "epochs": args.epochs,
             "batch_size": args.batch_size,

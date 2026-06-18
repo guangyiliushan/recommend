@@ -44,6 +44,7 @@ from recsys.evaluation.evaluator import (
     EvaluationResult,
     evaluate,
 )
+from recsys.utils.progress import phase_timer
 
 # ============================================================================
 # 阶段与状态枚举
@@ -811,39 +812,43 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     logs_dir = run_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # 阶段耗时记录
+    phase_durations: Dict[str, float] = {}
+
     # 阶段执行包装器
     def _run_phase(
         phase: ExperimentPhase,
         fn: Callable[[], Any],
     ) -> Any:
-        try:
-            return fn()
-        except Exception as exc:
-            err = ExperimentError(
-                code=_phase_to_error_code(phase),
-                phase=phase,
-                message=str(exc),
-                hint=None,
-                traceback=traceback.format_exc(),
-            )
-            # 写失败状态
-            write_status_file(
-                run_dir,
-                ExperimentStatus.FAILED,
-                run_id=run_id,
-                dataset=config.dataset_name,
-                model=config.model_name,
-                seed=config.seed,
-                started_at=started_at,
-                error=err,
-            )
-            # 记日志
-            (logs_dir / "stderr.log").write_text(
-                err.traceback or "", encoding="utf-8"
-            )
-            result.status = ExperimentStatus.FAILED
-            result.error = err
-            raise  # 重新抛出，由最外层统一捕获
+        with phase_timer(phase.value, phase_durations):
+            try:
+                return fn()
+            except Exception as exc:
+                err = ExperimentError(
+                    code=_phase_to_error_code(phase),
+                    phase=phase,
+                    message=str(exc),
+                    hint=None,
+                    traceback=traceback.format_exc(),
+                )
+                # 写失败状态
+                write_status_file(
+                    run_dir,
+                    ExperimentStatus.FAILED,
+                    run_id=run_id,
+                    dataset=config.dataset_name,
+                    model=config.model_name,
+                    seed=config.seed,
+                    started_at=started_at,
+                    error=err,
+                )
+                # 记日志
+                (logs_dir / "stderr.log").write_text(
+                    err.traceback or "", encoding="utf-8"
+                )
+                result.status = ExperimentStatus.FAILED
+                result.error = err
+                raise  # 重新抛出，由最外层统一捕获
 
     # 初始化内存追踪变量（在 try 块外定义，异常时默认为 None）
     peak_memory_mb = None
@@ -870,6 +875,9 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         )
 
         # ---- 6. dataset 构建 ----
+        # 启动 tracemalloc 追踪全链路内存
+        tracemalloc.start()
+
         def _build_dataset() -> BaseDataset:
             ds_cls = DATASET_REGISTRY.get(config.dataset_name)
             ds = ds_cls(
@@ -880,6 +888,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
                 max_seq_len=config.data_config.get("max_seq_len", 50),
                 min_seq_len=config.data_config.get("min_seq_len", 2),
                 neg_sample_count=config.data_config.get("neg_sample_count", 4),
+                min_action_type=config.data_config.get("min_action_type", 0),
                 **config.data_config.get("extra", {}),
             )
             ds.load()
@@ -904,15 +913,10 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         model = _run_phase(ExperimentPhase.MODEL, _build_model)
 
         # ---- 8. training / prediction ----
-        # 使用 tracemalloc 捕获峰值内存
-        tracemalloc.start()
         bundle = _run_phase(
             ExperimentPhase.TRAINING,
             lambda: route_execution(model, dataset, config),
         )
-        _, peak_bytes = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-        peak_memory_mb = peak_bytes / (1024 * 1024) if peak_bytes > 0 else None
 
         # ---- 9. evaluation ----
         def _run_evaluation() -> EvaluationResult:
@@ -950,6 +954,11 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             return evaluate(bundle, eval_cfg)
 
         eval_result = _run_phase(ExperimentPhase.EVALUATION, _run_evaluation)
+
+        # 停止 tracemalloc，捕获全链路峰值内存
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_memory_mb = peak_bytes / (1024 * 1024) if peak_bytes > 0 else None
 
         # ---- 10. artifact 落盘 ----
         def _write_artifacts() -> None:
@@ -1012,6 +1021,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             "finished_at": finished_at,
             "duration_seconds": duration,
             "peak_memory_mb": peak_memory_mb,  # v2: tracemalloc 峰值内存
+            "phase_durations": phase_durations,  # v3: 各阶段耗时
             "primary_metric": primary_metric,
             "primary_metric_value": primary_value,
             "num_samples": bundle.num_samples,

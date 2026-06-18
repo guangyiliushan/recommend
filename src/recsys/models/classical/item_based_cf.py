@@ -56,6 +56,7 @@ from scipy import sparse
 from recsys.core.base_model import BaseRecommender, Capability
 from recsys.core.prediction_bundle import PredictionBundle
 from recsys.core.registry import MODEL_REGISTRY
+from recsys.utils.progress import progress_phase
 
 # ---------------------------------------------------------------------------
 # 相似度策略抽象类与实现（论文 §3.1）
@@ -96,11 +97,12 @@ class SimilarityStrategy(ABC):
 
 
 class _CosineSimilarityStrategy(SimilarityStrategy):
-    """论文 §3.1.1 Cosine-based Similarity.
+    """论文 §3.1.1 Cosine-based Similarity（R^T @ R 优化版）。
 
     sim(i,j) = Σ_{u} r_{u,i}·r_{u,j} / √(Σ_u r_{u,i}²)·√(Σ_u r_{u,j}²)
 
     隐式数据：r_{u,i} = 1（交互）或 0（未交互）。
+    使用稀疏矩阵乘法 R^T @ R 构建共现矩阵，替代 dict-of-dicts。
     """
 
     def compute(
@@ -111,53 +113,52 @@ class _CosineSimilarityStrategy(SimilarityStrategy):
         top_k: int,
     ) -> sparse.csr_matrix:
         n_items = len(self._item_to_idx)
-        cooc: Dict[int, Dict[int, float]] = defaultdict(lambda: defaultdict(float))
+        n_users = len(user_items)
 
-        # 1. 构建共现矩阵
-        for items in user_items.values():
-            items_list = list(items) if hasattr(items, "__iter__") else list(items)
+        # --- 1. 构建稀疏交互矩阵 R (n_users × n_items) ---
+        rows: List[int] = []
+        cols: List[int] = []
 
-            if len(items_list) < 2:
-                continue
+        for u_idx, items in enumerate(user_items.values()):
+            if hasattr(items, "__iter__"):
+                for item in items:
+                    idx = self._item_to_idx.get(item)
+                    if idx is not None:
+                        rows.append(u_idx)
+                        cols.append(idx)
+            elif items in self._item_to_idx:
+                rows.append(u_idx)
+                cols.append(self._item_to_idx[items])
 
-            # 转换为索引列表
-            item_indices = [self._item_to_idx[item] for item in items_list if item in self._item_to_idx]
+        if len(rows) == 0:
+            return sparse.csr_matrix((n_items, n_items), dtype=np.float32)
 
-            # 更新共现矩阵（每个物品对共现 +1）
-            for i in range(len(item_indices)):
-                ii = item_indices[i]
-                for j in range(i + 1, len(item_indices)):
-                    jj = item_indices[j]
-                    cooc[ii][jj] += 1.0
-                    cooc[jj][ii] += 1.0
+        r_mat = sparse.csr_matrix(
+            (np.ones(len(rows), dtype=np.float32), (rows, cols)),
+            shape=(n_users, n_items),
+            dtype=np.float32,
+        )
 
-        # 2. 计算相似度并截断 Top-K
-        sim_matrix = sparse.lil_matrix((n_items, n_items), dtype=np.float32)
+        # --- 2. 共现矩阵 = R^T @ R（scipy C 级稀疏矩阵乘法）---
+        cooc = (r_mat.T @ r_mat).tocsr()
+        cooc.setdiag(0)  # 对角线置零
 
-        for i, neighbors in cooc.items():
-            if not neighbors:
-                continue
+        # --- 3. 归一化为余弦相似度 ---
+        pop_arr = np.array(
+            [item_popularity.get(self._idx_to_item[i], 1) for i in range(n_items)],
+            dtype=np.float32,
+        )
+        pop_sqrt = np.sqrt(pop_arr)
 
-            ni = item_popularity.get(self._idx_to_item[i], 1)
-            sim_scores: List[Tuple[int, float]] = []
+        # 仅对非零元素除以分母
+        cx, cy = cooc.nonzero()
+        for x, y in zip(cx, cy, strict=True):
+            denom = pop_sqrt[x] * pop_sqrt[y]
+            if denom > 0:
+                cooc[x, y] /= denom
 
-            for j, cij in neighbors.items():
-                nj = item_popularity.get(self._idx_to_item[j], 1)
-                denom = math.sqrt(ni * nj)
-                if denom > 0:
-                    sim = cij / denom
-                    sim_scores.append((j, sim))
-
-            # Top-K 截断
-            if len(sim_scores) > top_k:
-                sim_scores.sort(key=lambda x: x[1], reverse=True)
-                sim_scores = sim_scores[:top_k]
-
-            # 写入稀疏矩阵
-            for j, sim in sim_scores:
-                sim_matrix[i, j] = sim
-
-        return sim_matrix.tocsr()
+        # --- 4. 每行 Top-K 截断 ---
+        return _truncate_topk_per_row(cooc, top_k)
 
 
 class _AdjustedCosineSimilarityStrategy(SimilarityStrategy):
@@ -344,7 +345,7 @@ class _PearsonSimilarityStrategy(SimilarityStrategy):
 
 
 class _IUFCosineSimilarityStrategy(SimilarityStrategy):
-    """IUF 加权 Cosine 相似度（论文扩展）。
+    """IUF 加权 Cosine 相似度（论文扩展，R^T @ R 优化版）。
 
     活跃用户（交互物品多）对共现的贡献被压低，
     权重公式：1 / log(1 + user_item_count)
@@ -358,56 +359,88 @@ class _IUFCosineSimilarityStrategy(SimilarityStrategy):
         top_k: int,
     ) -> sparse.csr_matrix:
         n_items = len(self._item_to_idx)
-        cooc: Dict[int, Dict[int, float]] = defaultdict(lambda: defaultdict(float))
+        n_users = len(user_items)
 
-        # 1. 构建加权共现矩阵
-        for items in user_items.values():
-            items_list = list(items) if hasattr(items, "__iter__") else list(items)
+        # --- 1. 构建稀疏加权交互矩阵 R (n_users × n_items) ---
+        rows: List[int] = []
+        cols: List[int] = []
+        data_vals: List[float] = []
 
-            if len(items_list) < 2:
+        for u_idx, items in enumerate(user_items.values()):
+            items_list = list(items) if hasattr(items, "__iter__") else [items]
+
+            if len(items_list) == 0:
                 continue
 
             # IUF 权重：1 / log(1 + n)
             weight = 1.0 / math.log1p(len(items_list))
+            for item in items_list:
+                idx = self._item_to_idx.get(item)
+                if idx is not None:
+                    rows.append(u_idx)
+                    cols.append(idx)
+                    data_vals.append(weight)
 
-            # 转换为索引列表
-            item_indices = [self._item_to_idx[item] for item in items_list if item in self._item_to_idx]
+        if len(rows) == 0:
+            return sparse.csr_matrix((n_items, n_items), dtype=np.float32)
 
-            # 更新加权共现矩阵
-            for i in range(len(item_indices)):
-                ii = item_indices[i]
-                for j in range(i + 1, len(item_indices)):
-                    jj = item_indices[j]
-                    cooc[ii][jj] += weight
-                    cooc[jj][ii] += weight
+        r_mat = sparse.csr_matrix(
+            (data_vals, (rows, cols)),
+            shape=(n_users, n_items),
+            dtype=np.float32,
+        )
 
-        # 2. 计算相似度并截断 Top-K
-        sim_matrix = sparse.lil_matrix((n_items, n_items), dtype=np.float32)
+        # --- 2. 加权共现矩阵 = R^T @ R ---
+        cooc = (r_mat.T @ r_mat).tocsr()
+        cooc.setdiag(0)
 
-        for i, neighbors in cooc.items():
-            if not neighbors:
-                continue
+        # --- 3. 归一化为余弦相似度 ---
+        pop_arr = np.array(
+            [item_popularity.get(self._idx_to_item[i], 1) for i in range(n_items)],
+            dtype=np.float32,
+        )
+        pop_sqrt = np.sqrt(pop_arr)
 
-            ni = item_popularity.get(self._idx_to_item[i], 1)
-            sim_scores: List[Tuple[int, float]] = []
+        cx, cy = cooc.nonzero()
+        for x, y in zip(cx, cy, strict=True):
+            denom = pop_sqrt[x] * pop_sqrt[y]
+            if denom > 0:
+                cooc[x, y] /= denom
 
-            for j, cij in neighbors.items():
-                nj = item_popularity.get(self._idx_to_item[j], 1)
-                denom = math.sqrt(ni * nj)
-                if denom > 0:
-                    sim = cij / denom
-                    sim_scores.append((j, sim))
+        # --- 4. 每行 Top-K 截断 ---
+        return _truncate_topk_per_row(cooc, top_k)
 
-            # Top-K 截断
-            if len(sim_scores) > top_k:
-                sim_scores.sort(key=lambda x: x[1], reverse=True)
-                sim_scores = sim_scores[:top_k]
 
-            # 写入稀疏矩阵
-            for j, sim in sim_scores:
-                sim_matrix[i, j] = sim
+def _truncate_topk_per_row(sim_csr: sparse.csr_matrix, k: int) -> sparse.csr_matrix:
+    """对 CSR 稀疏矩阵每行仅保留 Top-K 非零元素。
 
-        return sim_matrix.tocsr()
+    使用 argpartition 避免全行排序，对大规模矩阵性能友好。
+    """
+    n = sim_csr.shape[0]
+    data_out: List[float] = []
+    indices_out: List[int] = []
+    indptr_out: List[int] = [0]
+
+    for i in range(n):
+        row = sim_csr.getrow(i)
+        if row.nnz <= k:
+            data_out.extend(row.data.tolist())
+            indices_out.extend(row.indices.tolist())
+        else:
+            row_data = row.data
+            row_indices = row.indices
+            top_k_idx = np.argpartition(-row_data, k - 1)[:k]
+            top_k_idx = top_k_idx[np.argsort(-row_data[top_k_idx])]
+            data_out.extend(row_data[top_k_idx].tolist())
+            indices_out.extend(row_indices[top_k_idx].tolist())
+        indptr_out.append(len(data_out))
+
+    return sparse.csr_matrix(
+        (np.array(data_out, dtype=np.float32),
+         np.array(indices_out, dtype=np.int32),
+         np.array(indptr_out, dtype=np.int32)),
+        shape=(n, n),
+    )
 
 
 # 相似度策略注册表（论文 §3.1 三种方法 + IUF 变体）
@@ -527,6 +560,8 @@ class ItemBasedCF(BaseRecommender):
         self._regression_coeffs: Optional[Dict[Tuple[int, int], Tuple[float, float]]] = None
         # 用户平均评分（用于 adjusted_cosine）
         self._user_means: Optional[Dict[int, float]] = None
+        # 预计算的 abs 相似度矩阵（避免 predict 阶段重复计算）
+        self._abs_sim_matrix: Optional[sparse.csr_matrix] = None
 
         # 添加推荐能力
         self._capabilities.add(Capability.RECOMMENDER)
@@ -576,18 +611,20 @@ class ItemBasedCF(BaseRecommender):
             self.problem_type = "implicit_ranking"
 
         # 1. 构建物品索引映射
-        self._build_item_index(user_items)
+        with progress_phase("构建物品索引"):
+            self._build_item_index(user_items)
 
         # 2. 如果使用 adjusted_cosine/pearson，计算用户均值
         if self._similarity in ("adjusted_cosine", "pearson"):
             self._compute_user_means(user_items, ratings)
 
         # 3. 构建相似度矩阵（根据 similarity 策略）
-        strategy_class = _SIMILARITY_STRATEGIES[self._similarity]
-        strategy_instance = strategy_class(self._item_to_idx, self._idx_to_item)  # 实例化策略，传递映射
-        self._sim_matrix = strategy_instance.compute(
-            user_items, ratings, self._item_popularity, self._top_k_neighbors
-        )
+        with progress_phase("计算相似度矩阵"):
+            strategy_class = _SIMILARITY_STRATEGIES[self._similarity]
+            strategy_instance = strategy_class(self._item_to_idx, self._idx_to_item)
+            self._sim_matrix = strategy_instance.compute(
+                user_items, ratings, self._item_popularity, self._top_k_neighbors
+            )
 
         # 4. 可选归一化（非论文方法）
         if self._normalize:
@@ -596,6 +633,10 @@ class ItemBasedCF(BaseRecommender):
         # 5. 如果使用 regression，预计算回归系数
         if self._prediction_method == "regression" and ratings is not None:
             self._precompute_regression_coefficients(user_items, ratings)
+
+        # 5.5 预计算 abs 相似度矩阵（避免 predict 阶段重复计算）
+        with progress_phase("预计算 abs 相似度矩阵"):
+            self._abs_sim_matrix = abs(self._sim_matrix).tocsr()
 
         self._fitted = True
         return self
@@ -676,11 +717,15 @@ class ItemBasedCF(BaseRecommender):
         k: Optional[int] = None,
         **kwargs: Any,
     ) -> PredictionBundle:
-        """为用户集生成 Top-K 推荐列表（论文 §3.2）。
+        """为用户集生成 Top-K 推荐列表（论文 §3.2）—— 批量稀疏矩阵乘法。
 
         根据 prediction_method 选择预测方法：
-            - weighted_sum: 论文 §3.2.1 Weighted Sum
+            - weighted_sum: 论文 §3.2.1 Weighted Sum（批量优化）
             - regression: 论文 §3.2.2 Regression
+
+        优化策略：
+            构建稀疏用户-物品矩阵 U，批量计算 scores = U @ sim_matrix
+            和 abs_weights = U @ abs_sim_matrix，仅 Top-K 提取步骤循环。
 
         Parameters
         ----------
@@ -710,31 +755,103 @@ class ItemBasedCF(BaseRecommender):
         if k is None:
             k = self._recommend_k
 
+        if not user_train_items:
+            # 空输入：返回空结果（使用 k=1 以避免验证错误）
+            return self.export_prediction_bundle(
+                y_true=[[]], y_score=[[]], group_ids=[], candidate_ids=[[]],
+                score_type="raw_score", k_list=[k],
+                metadata={
+                    "similarity": self._similarity,
+                    "top_k_neighbors": self._top_k_neighbors,
+                    "prediction_method": self._prediction_method,
+                    "problem_type": self.problem_type,
+                    "num_users": 0,
+                },
+            )
+
+        # --- 1. 构建稀疏用户-物品矩阵 U (n_users × n_items) ---
+        rows: List[int] = []
+        cols: List[int] = []
+        data: List[float] = []
+        user_index: List[int] = []  # row_idx → user_id
+
+        with progress_phase("构建用户-物品矩阵", total=len(user_train_items)):
+            for u_idx, (user_id, items) in enumerate(user_train_items.items()):
+                if not items:
+                    continue
+                user_index.append(user_id)
+                for item in items:
+                    idx = self._item_to_idx.get(item)
+                    if idx is not None:
+                        rows.append(u_idx)
+                        cols.append(idx)
+                        data.append(1.0)
+
+        n_users = len(user_index)
+        u_mat = sparse.csr_matrix(
+            (data, (rows, cols)),
+            shape=(n_users, len(self._item_to_idx)),
+            dtype=np.float32,
+        )
+
+        # --- 2. 批量矩阵乘法 ---
+        with progress_phase("批量计算预测分数"):
+            scores_sparse = u_mat @ self._sim_matrix          # (n_users × n_items)
+            abs_weights_sparse = u_mat @ self._abs_sim_matrix  # (n_users × n_items)
+
+        # --- 3. 转为 CSR 以便逐行提取 ---
+        scores_csr = scores_sparse.tocsr()
+        abs_csr = abs_weights_sparse.tocsr()
+
+        # --- 4. 逐用户 Top-K 提取（唯一循环）---
         group_ids: List[int] = []
         candidate_ids: List[List[int]] = []
         y_score: List[List[float]] = []
         y_true: List[List[int]] = []
 
-        for user_id, train_items in user_train_items.items():
-            if not train_items:
-                continue
+        with progress_phase("提取 Top-K 推荐", total=n_users) as pbar:
+            for row_idx, user_id in enumerate(user_index):
+                s_row = scores_csr.getrow(row_idx)
+                w_row = abs_csr.getrow(row_idx)
 
-            # 为该用户生成推荐
-            if self._prediction_method == "weighted_sum":
-                recs = self._score_for_user_weighted_sum(train_items)
-            elif self._prediction_method == "regression":
-                recs = self._score_for_user_regression(train_items, self._ratings or {})
-            else:
-                raise ValueError(f"不支持的预测方法: {self._prediction_method}")
+                if s_row.nnz == 0:
+                    pbar.update(1)
+                    continue
 
-            # 排序取 Top-K
-            top_items, top_scores = _top_k_from_scores(recs, k)
+                # 归一化: scores / abs_weights（按论文 §3.2.1）
+                s_data = s_row.data
+                w_data = w_row.data
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    norm_scores = np.where(w_data != 0, s_data / w_data, 0.0)
 
-            group_ids.append(user_id)
-            candidate_ids.append(top_items)
-            y_score.append(top_scores)
-            # 该用户在测试集中的真实交互物品
-            y_true.append(list(user_test_items.get(user_id, set())))
+                # 过滤已交互物品
+                train_set = user_train_items.get(user_id, set())
+                col_indices = s_row.indices
+                valid_mask = np.array(
+                    [self._idx_to_item.get(idx) not in train_set for idx in col_indices],
+                    dtype=bool,
+                )
+
+                valid_scores = norm_scores[valid_mask]
+                valid_items = col_indices[valid_mask]
+
+                if len(valid_scores) == 0:
+                    pbar.update(1)
+                    continue
+
+                # 取 Top-K（argpartition 性能优于完整排序）
+                top_n = min(k, len(valid_scores))
+                top_k_idx = np.argpartition(-valid_scores, top_n - 1)[:top_n]
+                top_k_idx = top_k_idx[np.argsort(-valid_scores[top_k_idx])]
+
+                top_items = [self._idx_to_item[int(valid_items[i])] for i in top_k_idx]
+                top_scores = [float(valid_scores[i]) for i in top_k_idx]
+
+                group_ids.append(user_id)
+                candidate_ids.append(top_items)
+                y_score.append(top_scores)
+                y_true.append(list(user_test_items.get(user_id, set())))
+                pbar.update(1)
 
         return self.export_prediction_bundle(
             y_true=y_true,
@@ -794,7 +911,7 @@ class ItemBasedCF(BaseRecommender):
 
         # 分母：绝对值求和 abs_weight_sums = |user_vec| @ |sim_matrix|
         abs_user_vec = np.abs(user_vec)
-        abs_sim_matrix = abs(self._sim_matrix)
+        abs_sim_matrix = self._abs_sim_matrix  # 使用预计算值
         abs_weight_sums = abs_user_vec @ abs_sim_matrix
 
         # 归一化：scores / abs_weight_sums（避免除零）
@@ -918,19 +1035,21 @@ class ItemBasedCF(BaseRecommender):
     def _build_item_index(self, user_items: Dict[int, Any]) -> None:
         """构建物品 ID → 矩阵索引的双向映射。"""
         all_items: Set[int] = set()
+        item_counts: Dict[int, int] = {}
         for items in user_items.values():
             if hasattr(items, "__iter__"):
-                all_items.update(items)
+                for item in items:
+                    all_items.add(item)
+                    item_counts[item] = item_counts.get(item, 0) + 1
+            else:
+                all_items.add(items)
+                item_counts[items] = item_counts.get(items, 0) + 1
+
         # 排序确保确定性
         sorted_items = sorted(all_items)
         self._item_to_idx = {item: idx for idx, item in enumerate(sorted_items)}
         self._idx_to_item = {idx: item for item, idx in self._item_to_idx.items()}
-
-        # 计算物品流行度
-        self._item_popularity = defaultdict(int)
-        for items in user_items.values():
-            for item in items:
-                self._item_popularity[item] += 1
+        self._item_popularity = item_counts  # 复用已构建的计数
 
     def _normalize_sparse_matrix(
         self,

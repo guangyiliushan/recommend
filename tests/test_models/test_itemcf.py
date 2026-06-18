@@ -170,3 +170,76 @@ def test_itemcf_empty_input():
 
     with pytest.raises(ValueError, match="user_item_pairs 不能为空"):
         model.fit(user_item_pairs=[])
+
+
+def test_itemcf_abs_sim_precomputed():
+    """fit() 后 _abs_sim_matrix 已预计算，predict() 正常返回。"""
+    from recsys.models.classical.item_based_cf import ItemBasedCF
+
+    model = ItemBasedCF(similarity="cosine", top_k_neighbors=10, recommend_k=5)
+    user_item_pairs = [
+        (0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (1, 3), (2, 0), (2, 3), (2, 4),
+    ]
+    model.fit(user_item_pairs)
+    assert model._abs_sim_matrix is not None
+    assert hasattr(model._abs_sim_matrix, "tocsr")  # 是 CSR 稀疏矩阵
+
+    bundle = model.predict(
+        user_train_items={0: {0, 1, 2}},
+        user_test_items={0: {3}},
+    )
+    assert bundle is not None
+
+
+def test_itemcf_batch_predict_basic():
+    """批量 predict 返回格式正确，分数在 [0,1] 范围内。"""
+    from recsys.models.classical.item_based_cf import ItemBasedCF
+
+    model = ItemBasedCF(similarity="cosine", top_k_neighbors=10, recommend_k=5)
+
+    user_item_pairs = [
+        (0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (1, 3),
+        (2, 0), (2, 3), (2, 4), (3, 4), (3, 5), (3, 6),
+        (4, 0), (4, 6), (4, 7),
+    ]
+    model.fit(user_item_pairs)
+
+    user_train = {0: {0, 1, 2}, 1: {1, 2, 3}, 2: {0, 3, 4}}
+    user_test = {0: {3}, 1: {4}, 2: {1}}
+
+    bundle = model.predict(user_train_items=user_train, user_test_items=user_test)
+    assert bundle is not None
+    assert len(bundle.group_ids) == 3
+
+    for scores in bundle.y_score:
+        assert len(scores) > 0
+        for s in scores:
+            assert 0.0 <= s <= 1.0, f"分数超出范围: {s}"
+
+
+def test_itemcf_batch_predict_empty_input():
+    """空用户输入应快速返回（使用默认值）。"""
+    from recsys.models.classical.item_based_cf import ItemBasedCF
+
+    model = ItemBasedCF(similarity="cosine", top_k_neighbors=10, recommend_k=5)
+    user_item_pairs = [(0, 0), (0, 1)]
+    model.fit(user_item_pairs)
+
+    # 空输入时使用默认空 dict，应能正常返回但不做预测
+    bundle = model.predict()
+    assert bundle is not None
+    # 空输入时 y_true 和 y_score 为空是合理的
+    assert isinstance(bundle.y_true, list)
+    assert isinstance(bundle.y_score, list)
+
+
+def test_itemcf_progress_silent_by_default():
+    """默认环境变量下 progress_phase 不产生输出，不报错。"""
+    import os
+    os.environ["RECSYS_PROGRESS"] = "0"
+    from recsys.utils.progress import progress_phase
+
+    with progress_phase("test", total=5) as p:
+        for _ in range(5):
+            p.update(1)
+    # 无异常即为通过

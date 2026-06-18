@@ -163,6 +163,19 @@ class BaseDataset(Dataset[Dict[str, torch.Tensor]], ABC):
     def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
         """Return a single sample as a dict of tensors."""
 
+    # ------------------------------------------------------------------
+    # Item pool statistics (for negative sampling)
+    # ------------------------------------------------------------------
+
+    def get_item_pool_stats(self) -> Optional[Any]:
+        """Return item pool statistics for negative sampling.
+
+        Returns None by default — subclasses with candidate/item pools
+        (e.g. TAAC2025Dataset) should override to provide consistent
+        statistics based on the current filtering settings.
+        """
+        return None
+
 
 # ------------------------------------------------------------------
 # Type helper for typed registries

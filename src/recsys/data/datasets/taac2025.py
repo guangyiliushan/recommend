@@ -437,6 +437,11 @@ class TAAC2025Dataset(BaseDataset):
         Either ``"1M"`` or ``"10M"``.
     root_dir : str
         Local cache directory for HuggingFace datasets.
+    min_action_type : int
+        Minimum action_type to include as a positive interaction.
+        TencentGR-1M action_type: 0=曝光(exposure), 1=点击(click).
+        默认 0（包含所有行为），设为 1 仅提取点击作为正交互。
+        ItemCF 隐式推荐场景建议设为 1。
     """
 
     def __init__(
@@ -446,6 +451,7 @@ class TAAC2025Dataset(BaseDataset):
         split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1),
         max_seq_len: int = 50,
         min_seq_len: int = 2,
+        min_action_type: int = 0,
         neg_sample_count: int = 4,
         **kwargs: Any,
     ) -> None:
@@ -455,6 +461,7 @@ class TAAC2025Dataset(BaseDataset):
             )
         self._version = version
         self._repo_id = f"{_TAAC2025_REPO}/TencentGR-{version}"
+        self._min_action_type = min_action_type
         super().__init__(
             root_dir=root_dir,
             split_ratios=split_ratios,
@@ -716,7 +723,10 @@ class TAAC2025Dataset(BaseDataset):
 
     def _get_cache_path(self) -> Path:
         """Get the cache file path for preprocessed sequences."""
-        config_str = f"{self._version}_{self.split_ratios}_{self.min_seq_len}"
+        config_str = (
+            f"{self._version}_{self.split_ratios}_{self.min_seq_len}"
+            f"_at{self._min_action_type}"
+        )
         config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
         cache_dir = Path(self.root_dir) / "taac2025_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -839,9 +849,12 @@ class TAAC2025Dataset(BaseDataset):
             # The values (flat struct array) contains all struct elements
             flat_values = seq_combined.values
 
-            # Extract just the item_id field from the flat struct array
-            # This is a pure Arrow operation — no Python dict creation
+            # Extract item_id and action_type fields from the flat struct array.
+            # This is a pure Arrow operation — no Python dict creation.
             flat_item_ids = flat_values.field("item_id").to_numpy(zero_copy_only=False)
+            flat_action_types = flat_values.field("action_type").to_numpy(
+                zero_copy_only=False
+            )
 
             # Also get user_ids as numpy
             user_ids_all = user_id_col.to_numpy(zero_copy_only=False)
@@ -853,19 +866,29 @@ class TAAC2025Dataset(BaseDataset):
                 end_offset = int(offsets[i + 1])
                 if start == end_offset:
                     continue
-                # Slice the item_id numpy array for this user's sequence
-                user_item_ids = flat_item_ids[start:end_offset].tolist()
+                # Slice item_id and action_type for this user's sequence
+                slice_item_ids = flat_item_ids[start:end_offset]
+                slice_action_types = flat_action_types[start:end_offset]
+
+                # Filter: keep only items with action_type >= min_action_type
+                if self._min_action_type > 0:
+                    keep_mask = slice_action_types >= self._min_action_type
+                    slice_item_ids = slice_item_ids[keep_mask]
+                    if len(slice_item_ids) == 0:
+                        continue
+
+                user_item_ids = slice_item_ids.tolist()
                 user_seqs[uid] = user_item_ids
                 all_items.update(user_item_ids)
 
                 if i % 200_000 == 0 and i > 0:
                     logger.debug(
-                        "Processed %d / %d users (%d items)",
-                        i, n_rows, len(all_items),
+                        "Processed %d / %d users (%d items, action_type >= %d)",
+                        i, n_rows, len(all_items), self._min_action_type,
                     )
 
             # Free Arrow memory eagerly
-            del arrow_table, seq_combined, flat_values, flat_item_ids, offsets, user_ids_all
+            del arrow_table, seq_combined, flat_values, flat_item_ids, flat_action_types, offsets, user_ids_all
 
             # Filter users with enough interactions
             user_ids_list: List[int] = []
@@ -911,6 +934,7 @@ class TAAC2025Dataset(BaseDataset):
 
         # Split by user for memory efficiency — each user goes to one split only.
         # This avoids creating overlapping sequence views.
+        self._all_items = all_items
         item_pool = torch.as_tensor(sorted(all_items), dtype=torch.long)
 
         # Assign users to splits based on cumulative position counts
@@ -965,6 +989,23 @@ class TAAC2025Dataset(BaseDataset):
         return train_ds, val_ds, test_ds
 
     # ----- iteration -----------------------------------------------------
+
+    def get_item_pool_stats(self) -> Optional[Any]:
+        """返回过滤后的物品池统计（用于负采样）。
+
+        Returns
+        -------
+        Optional[ItemPoolStats]
+            物品池统计对象，若数据集未加载则返回 None。
+        """
+        if not hasattr(self, "_all_items") or self._all_items is None:
+            return None
+        from recsys.data.negative_sampling import ItemPoolStats
+        item_ids = np.array(sorted(self._all_items), dtype=np.int64)
+        return ItemPoolStats(
+            item_ids=item_ids,
+            n_total_items=len(item_ids),
+        )
 
     def __len__(self) -> int:
         if self._train is None:

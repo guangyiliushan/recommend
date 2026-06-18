@@ -74,6 +74,7 @@ class DataConfig:
     max_seq_len: int = 50
     min_seq_len: int = 2
     neg_sample_count: int = 4
+    min_action_type: int = 0  # 0=全部行为, 1=仅点击（隐式反馈）
 
 
 @dataclass
