@@ -2,13 +2,13 @@
 # WARNING: This will take a very long time to run.
 # Full Benchmark — 当前可运行的全部模型 × 全部数据集
 #
-# 当前真实可运行组合（2026-06）:
-#   模型: itemcf (非训练, ranking), dssm (训练, pointwise)
-#   数据集: taac2026_data_sample
+# 当前真实注册组合（2026-06）:
+#   模型: itemcf (非训练, ranking), hyformer (训练, pointwise)
+#   数据集: taac2025_1M, taac2025_10M, taac2026_data_sample, taac2026_second_round
+#   （synthetic 仅用于测试，不入 benchmark）
 #
-# 注意：本文件原本引用 50+ 模型（DeepFM/SASRec/DCN/ESMM 等），
-# 但绝大多数模型仍为占位或空文件，未注册到 MODEL_REGISTRY。
-# 已修正 ItemCF → itemcf (全小写，与注册名一致)。
+# 注意：其余 50+ 模型（DeepFM/SASRec/DCN/ESMM 等）虽文件存在，
+# 但 register 装饰器被注释，未生效。待模型实现后再启用。
 
 experiment:
   name: "benchmark_all"
@@ -17,8 +17,11 @@ experiment:
   output_dir: "./outputs"
 
 datasets:
+  - "taac2025_1M"
+  - "taac2025_10M"
   - "taac2026_data_sample"
+  - "taac2026_second_round"
 
 models:
   - { name: "itemcf", family: "classical" }
-  - { name: "dssm", family: "classical" }
+  - { name: "hyformer", family: "unified" }

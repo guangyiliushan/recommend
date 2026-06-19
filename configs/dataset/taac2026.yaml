@@ -3,8 +3,12 @@
 # Ideal for local prototyping and debugging.
 #
 # Available variants:
-#   taac2026_data_sample   — TAAC2026/data_sample_1000          (1k rows)
-#   taac2026_second_round  — TAAC2026/second_round_sample_1000  (1k rows, includes domain sequences)
+#   taac2026_data_sample   — TAAC2026/data_sample_1000          (1k rows, 120 cols)
+#   taac2026_second_round  — TAAC2026/second_round_sample_1000  (1k rows, 142 cols)
+#
+# split_mode:
+#   "temporal" (默认) — 按 timestamp 时序排序后切分，推荐系统标准做法
+#   "random"          — 随机打乱后切分，适用于 CTR/CVR 点式评估等非时序场景
 #
 # HuggingFace:
 #   https://huggingface.co/datasets/TAAC2026/data_sample_1000
@@ -15,6 +19,7 @@
 name: "taac2026_second_round"
 variant: "second_round"
 data_dir: "./data"
+split_mode: "temporal"
 split_ratios: [0.8, 0.1, 0.1]
 batch_size: 256
 num_workers: 2

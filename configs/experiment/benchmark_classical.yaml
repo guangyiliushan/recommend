@@ -1,7 +1,8 @@
 # Benchmark: Classical Era (2001–2015)
-# 当前仅 itemcf 已实现，其余经典模型仍为占位
-# 当前可运行配置：itemcf (非训练) + dssm (训练)
-# 数据集：taac2026_data_sample (唯一已注册且可用)
+# 当前仅 itemcf 已实现（非训练），其余经典模型仍为占位。
+# hyformer 虽非 classical 家族，但作为唯一可用的训练型基线纳入。
+#
+# 数据集：taac2025_1M (序列推荐) + taac2026_data_sample (CTR/CVR)
 #
 # 用法:
 #   python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
@@ -13,10 +14,11 @@ experiment:
   output_dir: "./outputs"
 
 datasets:
+  - "taac2025_1M"
   - "taac2026_data_sample"
 
 models:
   - name: "itemcf"
     family: "classical"
-  - name: "dssm"
-    family: "classical"
+  - name: "hyformer"
+    family: "unified"

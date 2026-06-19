@@ -211,12 +211,19 @@ class TAAC2026Dataset(BaseDataset):
         ``"data_sample"`` or ``"second_round"``.
     root_dir : str
         Local cache directory for HuggingFace datasets.
+    split_mode : str
+        数据切分方式：``"temporal"``（默认，按 timestamp 时序切分，
+        用过去预测未来 — 推荐系统标准做法）或 ``"random"``
+        （随机打乱后切分，用于非时序场景如 CTR/CVR 点式评估）。
+    split_ratios : tuple
+        (train, val, test) 比例，默认 (0.8, 0.1, 0.1)。
     """
 
     def __init__(
         self,
         variant: str = "second_round",
         root_dir: str = "./data",
+        split_mode: str = "temporal",
         split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1),
         max_seq_len: int = 50,
         min_seq_len: int = 2,
@@ -227,9 +234,14 @@ class TAAC2026Dataset(BaseDataset):
             raise ValueError(
                 f"variant must be one of {list(_VARIANTS.keys())}, got '{variant}'"
             )
+        if split_mode not in ("temporal", "random"):
+            raise ValueError(
+                f"split_mode must be 'temporal' or 'random', got '{split_mode}'"
+            )
         self._variant = variant
         self._variant_info = _VARIANTS[variant]
         self._repo_id = f"{_TAAC2026_REPO}/{self._variant_info['repo_suffix']}"
+        self._split_mode = split_mode
         super().__init__(
             root_dir=root_dir,
             split_ratios=split_ratios,
@@ -313,11 +325,15 @@ class TAAC2026Dataset(BaseDataset):
         self._num_users = len(user_set)
         self._num_items = len(item_set)
 
-        # Shuffle & split
-        import numpy as np
-
-        rng = np.random.default_rng(42)
-        rng.shuffle(rows)  # type: ignore[arg-type]
+        # Split rows by chosen strategy
+        if self._split_mode == "temporal":
+            # 按时序切分：timestamp 升序排列，train → val → test（推荐系统标准做法）
+            rows.sort(key=lambda r: _safe_int(r.get("timestamp")))
+        else:
+            # 随机切分：shuffle 后按比例分割，适用于 CTR/CVR 点式评估
+            import numpy as np
+            rng = np.random.default_rng(42)
+            rng.shuffle(rows)  # type: ignore[arg-type]
 
         n = len(rows)
         n_train = int(n * self.split_ratios[0])

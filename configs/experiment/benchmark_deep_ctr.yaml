@@ -1,11 +1,9 @@
 # Benchmark: Deep CTR Era (2016–2019)
 # Models: YouTube DNN, Wide&Deep, DeepFM, DIN, DIEN, DLRM
-# 当前可运行：dssm (NeuralRecommender, pointwise binary)
-# 数据集：taac2026_data_sample
 #
-# 注意：本文件原本引用 DeepFM/DIN/DLRM 等 deep_ctr 模型，
-# 但这些模型当前均为占位实现，未注册到 MODEL_REGISTRY。
-# 现改为引用当前唯一可用的训练型模型 dssm。
+# 当前状态：DeepFM/DIN/DLRM 等 deep_ctr 模型均为占位实现，
+# register 装饰器被注释，未生效。hyformer 作为唯一可用的训练型基线纳入。
+# 待 deep_ctr 模型实现后替换。
 
 experiment:
   name: "benchmark_deep_ctr"
@@ -17,5 +15,5 @@ datasets:
   - "taac2026_data_sample"
 
 models:
-  - name: "dssm"
-    family: "classical"
+  - name: "hyformer"
+    family: "unified"
