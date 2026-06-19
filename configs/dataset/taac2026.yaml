@@ -1,3 +1,4 @@
+# @package _global_
 # TAAC 2026 advertising dataset config
 # Lightweight sample datasets from Tencent Advertising Algorithm Competition 2026.
 # Ideal for local prototyping and debugging.
@@ -16,13 +17,14 @@
 #
 # Reference: arxiv:2311.09544, arxiv:2508.14948
 
-name: "taac2026_second_round"
-variant: "second_round"
-data_dir: "./data"
-split_mode: "temporal"
-split_ratios: [0.8, 0.1, 0.1]
-batch_size: 256
-num_workers: 2
-max_seq_len: 50
-min_seq_len: 2
-neg_sample_count: 4
+data:
+  name: "taac2026_second_round"
+  data_dir: "./data"
+  split_mode: "temporal"
+  split_ratios: [0.8, 0.1, 0.1]
+  batch_size: 256
+  num_workers: 2
+  max_seq_len: 50
+  min_seq_len: 2
+  neg_sample_count: 4
+  min_action_type: 0

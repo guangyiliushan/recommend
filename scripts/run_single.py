@@ -1,9 +1,15 @@
 """Single experiment runner — CLI entry point.
 
-Usage:
-    uv run python scripts/run_single.py --model itemcf --dataset taac2026_data_sample --seed 42
-    uv run python scripts/run_single.py --model dssm --dataset taac2026_data_sample --seed 42 --epochs 10 --batch-size 128
-    uv run python scripts/run_single.py --model dssm --dataset taac2026_data_sample --seed 42 --lr 3e-4 --optimizer adamw
+Two modes:
+    argparse mode (default):
+        uv run python scripts/run_single.py --model itemcf --dataset taac2026_data_sample --seed 42
+        uv run python scripts/run_single.py --model hyformer --dataset taac2026_data_sample --seed 42 --epochs 10
+
+    Hydra mode (--hydra):
+        uv run python scripts/run_single.py --hydra \
+            --hydra-config config --hydra-overrides model=classical/itemcf
+        uv run python scripts/run_single.py --hydra \
+            --hydra-overrides model.params.similarity=iuf data.split_mode=random
 """
 
 from __future__ import annotations
@@ -104,7 +110,93 @@ def build_parser() -> argparse.ArgumentParser:
     runtime_group.add_argument("--device", default="auto", help="设备 (默认: auto)")
     runtime_group.add_argument("--log-level", default="INFO", help="日志级别")
 
+    # Hydra 模式
+    hydra_group = parser.add_argument_group("Hydra")
+    hydra_group.add_argument(
+        "--hydra",
+        action="store_true",
+        help="启用 Hydra 配置模式（从 configs/ 加载 YAML，支持组合覆盖）",
+    )
+    hydra_group.add_argument(
+        "--hydra-config",
+        default="config",
+        help="Hydra 配置名（不含 .yaml 后缀，默认: config）",
+    )
+    hydra_group.add_argument(
+        "--hydra-overrides",
+        nargs="*",
+        default=[],
+        help="Hydra 覆盖项 (如: model.params.similarity=iuf data.split_mode=random)",
+    )
+
     return parser
+
+
+def _run_hydra_mode(
+    args: argparse.Namespace,
+    available_models: list,
+    available_datasets: list,
+) -> None:
+    """Hydra 配置模式：从 configs/ YAML 加载配置并运行实验。
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        解析后的命令行参数。
+    available_models : list
+        已注册的模型名列表。
+    available_datasets : list
+        已注册的数据集名列表。
+    """
+    from recsys.utils.config import (
+        load_config,
+        recbench_to_experiment_config,
+    )
+
+    # 加载 YAML 配置并应用 CLI 覆盖
+    config_path = f"configs/{args.hydra_config}.yaml"
+    print(f"Loading Hydra config: {config_path}")
+    recbench_cfg = load_config(
+        config_path=config_path,
+        overrides=list(args.hydra_overrides) if args.hydra_overrides else [],
+    )
+
+    # 校验数据集和模型是否注册
+    if recbench_cfg.data.name not in available_datasets:
+        print(
+            f"Error: dataset '{recbench_cfg.data.name}' not registered. "
+            f"Available: {available_datasets}"
+        )
+        sys.exit(1)
+    if recbench_cfg.model.name not in available_models:
+        print(
+            f"Error: model '{recbench_cfg.model.name}' not registered. "
+            f"Available: {available_models}"
+        )
+        sys.exit(1)
+
+    # 转换为 pipeline 层配置
+    exp_config = recbench_to_experiment_config(recbench_cfg)
+
+    print(
+        f"\nStarting experiment (Hydra): {recbench_cfg.experiment.name}"
+    )
+    print(
+        f"  Model: {exp_config.model_name}, "
+        f"Dataset: {exp_config.dataset_name}, "
+        f"Seed: {exp_config.seed}"
+    )
+    result = run_experiment(exp_config)
+
+    print(f"\nExperiment completed: {result.status.value}")
+    if result.succeeded:
+        print(f"  Summary metrics: {json.dumps(result.summary_metrics, indent=2)}")
+        print("  Artifacts:")
+        for key, path in result.artifact_paths.items():
+            print(f"    {key}: {path}")
+    else:
+        print(f"  Error: {result.error}")
+        sys.exit(1)
 
 
 def main() -> None:
@@ -119,6 +211,12 @@ def main() -> None:
     print(f"  Available models: {available_models}")
     print(f"  Available datasets: {available_datasets}")
 
+    # ---- Hydra mode ----
+    if args.hydra:
+        _run_hydra_mode(args, available_models, available_datasets)
+        return
+
+    # ---- argparse mode (original path) ----
     # 2. 校验模型和数据集
     if args.model not in available_models:
         print(f"Error: model '{args.model}' not found. Available: {available_models}")

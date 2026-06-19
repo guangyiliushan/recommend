@@ -1,9 +1,15 @@
 """Batch benchmark runner — CLI entry point.
 
 Usage:
+    # 配置文件模式
     uv run python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
     uv run python scripts/run_benchmark.py --config configs/experiment/benchmark_all.yaml --max-concurrent 2
-    uv run python scripts/run_benchmark.py --models itemcf dssm --datasets taac2026_data_sample --seeds 42 43 44
+
+    # 命令行指定模型和数据集
+    uv run python scripts/run_benchmark.py --models itemcf hyformer --datasets taac2026_data_sample
+
+    # Hydra 模式：从 YAML 加载每轮实验的默认参数
+    uv run python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml --hydra
 """
 
 from __future__ import annotations
@@ -76,8 +82,69 @@ def build_parser() -> argparse.ArgumentParser:
         default="./outputs/experiments",
         help="单实验输出目录 (默认: ./outputs/experiments)",
     )
+    parser.add_argument(
+        "--hydra",
+        action="store_true",
+        help="从 configs/config.yaml 加载每轮实验的默认参数（split_mode 等）",
+    )
 
     return parser
+
+
+def _run_benchmark_hydra_mode(
+    bench_cfg: BenchmarkConfig,
+    models: list,
+    datasets: list,
+    args: argparse.Namespace,
+) -> None:
+    """Hydra 模式：从 config.yaml 加载基准配置，注入每个实验参数。
+
+    覆盖 expand_benchmark_config() 的默认空配置行为，
+    为每个 (model, dataset, seed) 组合注入 data/training/evaluation 默认参数。
+    """
+    from recsys.pipeline.experiment import ExperimentConfig as PipelineExperimentConfig
+    from recsys.pipeline.experiment import (
+        run_experiment,
+    )
+    from recsys.utils.config import (
+        load_config,
+        recbench_to_experiment_config,
+    )
+
+    # 加载基准 YAML 配置
+    base_recbench = load_config("configs/config.yaml")
+    base_exp = recbench_to_experiment_config(base_recbench)
+
+    # 按矩阵展开执行
+    all_results: list = []
+    for model_name in models:
+        for dataset_name in datasets:
+            for seed in args.seeds:
+                cfg = PipelineExperimentConfig(
+                    experiment_name=bench_cfg.benchmark_name,
+                    dataset_name=dataset_name,
+                    model_name=model_name,
+                    seed=seed,
+                    output_dir=bench_cfg.experiment_output_dir,
+                    data_config=dict(base_exp.data_config),
+                    model_config=dict(base_exp.model_config),
+                    training_config=dict(base_exp.training_config),
+                    evaluation_config=dict(base_exp.evaluation_config),
+                    runtime_config=dict(base_exp.runtime_config),
+                )
+                all_results.append(run_experiment(cfg))
+
+    # 汇总
+    succeeded = sum(
+        1 for r in all_results
+        if r.status.value in ("succeeded", "skipped")
+    )
+    failed = sum(
+        1 for r in all_results if r.status.value == "failed"
+    )
+    print(f"\nBenchmark completed (Hydra): {succeeded} succeeded, {failed} failed")
+    if failed:
+        sys.exit(1)
 
 
 def main() -> None:
@@ -154,6 +221,11 @@ def main() -> None:
     total_runs = len(models) * len(datasets) * len(args.seeds)
     print(f"\nStarting benchmark: {benchmark_name}")
     print(f"  Matrix: {len(models)} models x {len(datasets)} datasets x {len(args.seeds)} seeds = {total_runs} runs")
+
+    if args.hydra:
+        _run_benchmark_hydra_mode(bench_cfg, models, datasets, args)
+        return
+
     result = run_benchmark(bench_cfg)
 
     # 6. 打印结果

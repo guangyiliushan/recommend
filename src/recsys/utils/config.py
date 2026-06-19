@@ -68,6 +68,7 @@ class DataConfig:
 
     name: str = "taac2026"
     data_dir: str = "./data"
+    split_mode: str = "temporal"  # "temporal" | "random"
     split_ratios: Tuple[float, float, float] = (0.8, 0.1, 0.1)
     batch_size: int = 256
     num_workers: int = 4
@@ -457,3 +458,72 @@ def _compute_config_hash(config: RecBenchConfig) -> str:
     }
     raw = json.dumps(stable, sort_keys=True)
     return hashlib.md5(raw.encode()).hexdigest()[:8]
+
+
+# ---------------------------------------------------------------------------
+# 配置桥接：RecBenchConfig → pipeline ExperimentConfig
+# ---------------------------------------------------------------------------
+
+def recbench_to_experiment_config(
+    config: RecBenchConfig,
+):
+    # type: (...) -> recsys.pipeline.experiment.ExperimentConfig  # noqa: F821
+    """将 RecBenchConfig 转换为 pipeline 层 ExperimentConfig。
+
+    这是 Hydra 配置系统与 pipeline 执行层之间的桥接函数。
+    使用全路径导入避免与本模块的 ``ExperimentConfig`` 命名冲突。
+
+    Parameters
+    ----------
+    config : RecBenchConfig
+        fully resolved 的 Hydra 配置对象。
+
+    Returns
+    -------
+    recsys.pipeline.experiment.ExperimentConfig
+        pipeline 层可消费的实验配置。
+    """
+    # 全路径导入避免命名冲突
+    from recsys.pipeline.experiment import (  # noqa: PLC0415
+        ExperimentConfig as PipelineExperimentConfig,
+    )
+
+    return PipelineExperimentConfig(
+        experiment_name=config.experiment.name,
+        dataset_name=config.data.name,
+        model_name=config.model.name,
+        seed=config.runtime.seed,
+        output_dir=config.runtime.output_root,
+        data_config={
+            "root_dir": config.data.data_dir,
+            "split_mode": config.data.split_mode,
+            "split_ratios": list(config.data.split_ratios),
+            "max_seq_len": config.data.max_seq_len,
+            "min_seq_len": config.data.min_seq_len,
+            "neg_sample_count": config.data.neg_sample_count,
+            "min_action_type": config.data.min_action_type,
+        },
+        model_config={
+            "params": dict(config.model.params),
+        },
+        training_config={
+            "epochs": config.training.epochs,
+            "batch_size": config.data.batch_size,
+            "learning_rate": config.training.learning_rate,
+            "optimizer": config.training.optimizer,
+            "scheduler": config.training.scheduler,
+            "weight_decay": config.training.weight_decay,
+            "warmup_epochs": config.training.warmup_epochs,
+        },
+        evaluation_config={
+            "metrics": list(config.evaluation.metrics),
+            "ranking_k": (list(config.evaluation.ranking_k)
+                          if config.evaluation.ranking_k else [10]),
+            "generate_curves": config.evaluation.generate_curves,
+        },
+        runtime_config={
+            "device": config.runtime.device,
+            "seed": config.runtime.seed,
+            "log_level": config.runtime.log_level,
+        },
+    )

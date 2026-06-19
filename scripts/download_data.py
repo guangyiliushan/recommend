@@ -1,31 +1,61 @@
-"""Dataset download script — 数据下载引导脚本。
+"""Dataset download script — 通过 HuggingFace datasets 库下载 TAAC 数据集。
 
-当前项目使用 TAAC 数据集，数据文件需放置在 `./data/` 目录下。
-TAAC 数据集为线下竞赛数据，请从对应渠道获取后手动放置。
-
-已注册的数据集：
-- taac2025_1M, taac2025_10M: TAAC 2025 数据适配器
-- taac2026_data_sample, taac2026_second_round: TAAC 2026 数据适配器
-
-使用方法：
-1. 将数据文件放置到 ./data/ 目录下
-2. 在 ExperimentConfig.data_config 中设置 root_dir 指向数据目录
-
-其他公共数据集（MovieLens、Criteo、Taobao）尚未接通，
-待数据集适配器实现后本脚本将提供自动下载功能。
+Usage:
+    uv run python scripts/download_data.py --dataset taac2026_data_sample
+    uv run python scripts/download_data.py --dataset taac2025_1M --cache-dir ./data
+    uv run python scripts/download_data.py --dataset taac2026_second_round
 """
 
 from __future__ import annotations
 
+import argparse
+import sys
+
+from datasets import load_dataset  # noqa: E402
+
+# 注册名到 HuggingFace repo_id 的映射
+_REPO_MAP: dict[str, str] = {
+    "taac2025_1M": "TAAC2025/TencentGR-1M",
+    "taac2025_10M": "TAAC2025/TencentGR-10M",
+    "taac2026_data_sample": "TAAC2026/data_sample_1000",
+    "taac2026_second_round": "TAAC2026/second_round_sample_1000",
+}
+
 
 def main() -> None:
-    print(__doc__)
-    print("\n当前建议：")
-    print("  1. 将 TAAC 数据放置到 ./data/ 目录")
-    print("  2. 使用 run_single.py 或 Python API 直接运行实验")
-    print()
-    print("  示例:")
-    print("    uv run python scripts/run_single.py --model itemcf --dataset taac2026_data_sample --seed 42")
+    parser = argparse.ArgumentParser(
+        description="通过 HuggingFace 下载 TAAC 数据集到本地缓存",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--dataset", "-d",
+        required=True,
+        choices=list(_REPO_MAP.keys()),
+        help="数据集注册名",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        default="./data",
+        help="缓存目录 (默认: ./data)",
+    )
+    args = parser.parse_args()
+
+    repo_id = _REPO_MAP[args.dataset]
+    print(f"Downloading {repo_id} ...")
+    try:
+        ds = load_dataset(
+            repo_id, "default", split="train", cache_dir=args.cache_dir,
+        )
+    except ImportError:
+        print(
+            "Error: `datasets` 未安装。请运行: uv pip install datasets",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    n_cols = len(ds.features) if hasattr(ds, "features") else len(ds.column_names)
+    print(f"  Rows: {len(ds):,}, Columns: {n_cols}")
+    print(f"  Cache location: {args.cache_dir}")
 
 
 if __name__ == "__main__":

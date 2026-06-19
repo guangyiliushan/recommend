@@ -891,6 +891,7 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             ds_cls = DATASET_REGISTRY.get(config.dataset_name)
             ds = ds_cls(
                 root_dir=config.data_config.get("root_dir", "./data"),
+                split_mode=config.data_config.get("split_mode", "temporal"),
                 split_ratios=tuple(
                     config.data_config.get("split_ratios", (0.8, 0.1, 0.1))
                 ),

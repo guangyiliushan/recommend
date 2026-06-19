@@ -59,9 +59,15 @@ RecBench 的目录结构需要同时服务于：
 
 ### `scripts/`
 
-- 当前用于承载 CLI 实验入口
-- `run_single.py` / `run_benchmark.py` 已实现为基础可用入口
-- 其他脚本（`run_ablation.py`、`download_data.py` 等）为引导提示
+- 承载 CLI 实验入口与工具脚本
+- `run.py` — Hydra 入口（YAML 组合 + CLI 覆盖）
+- `run_single.py` — 单实验 argparse 入口
+- `run_benchmark.py` — 批量 benchmark 入口
+- `run_ablation.py` — 消融实验矩阵
+- `download_data.py` — HuggingFace 数据集下载
+- `generate_report.py` — 从 summary.csv 生成对比报告
+- `benchmark_data_pipeline.py` — 数据存储格式基准
+- `train_hyformer.py` — HyFormer 模型训练（模拟数据 / 调试用）
 
 ### `src/recsys/`
 

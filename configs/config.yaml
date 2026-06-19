@@ -22,12 +22,14 @@ experiment:
 data:
   name: "taac2026_data_sample"
   data_dir: "./data"
+  split_mode: "temporal"
   split_ratios: [0.8, 0.1, 0.1]
   batch_size: 256
   num_workers: 4
   max_seq_len: 50
   min_seq_len: 2
   neg_sample_count: 4
+  min_action_type: 0
 
 model:
   name: "itemcf"
