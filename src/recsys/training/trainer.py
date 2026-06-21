@@ -117,13 +117,15 @@ class LightningRecommender(pl.LightningModule):
         if isinstance(losses, dict):
             total_loss = torch.tensor(0.0, device=self.device)
             for name, loss_val in losses.items():
-                self.log(
-                    f"train/{name}",
-                    loss_val,
-                    on_step=True,
-                    on_epoch=True,
-                    prog_bar=False,
-                )
+                # 避免与下文 `train/loss` 重复 log（Lightning 不允许同一 step 同名不同参数）
+                if name != "loss":
+                    self.log(
+                        f"train/{name}",
+                        loss_val,
+                        on_step=True,
+                        on_epoch=True,
+                        prog_bar=False,
+                    )
                 total_loss = total_loss + loss_val
         else:
             total_loss = losses
@@ -147,13 +149,15 @@ class LightningRecommender(pl.LightningModule):
         if isinstance(losses, dict):
             total_loss = torch.tensor(0.0, device=self.device)
             for name, loss_val in losses.items():
-                self.log(
-                    f"val/{name}",
-                    loss_val,
-                    on_step=False,
-                    on_epoch=True,
-                    prog_bar=False,
-                )
+                # 避免与下文 `val/loss` 重复 log（Lightning 不允许同一 step 同名不同参数）
+                if name != "loss":
+                    self.log(
+                        f"val/{name}",
+                        loss_val,
+                        on_step=False,
+                        on_epoch=True,
+                        prog_bar=False,
+                    )
                 total_loss = total_loss + loss_val
         else:
             total_loss = losses

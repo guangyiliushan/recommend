@@ -1,0 +1,101 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Dense Feature Distributions"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "user_dense_feats_61",
+        "user_dense_feats_62",
+        "user_dense_feats_63",
+        "user_dense_feats_64",
+        "user_dense_feats_65",
+        "user_dense_feats_66",
+        "user_dense_feats_87",
+        "user_dense_feats_89",
+        "user_dense_feats_90",
+        "user_dense_feats_91",
+        "user_dense_feats_118",
+        "user_dense_feats_120",
+        "user_dense_feats_121",
+        "user_dense_feats_123",
+        "user_dense_feats_130",
+        "user_dense_feats_131",
+        "user_dense_feats_132"
+      ],
+      "axisLabel": {
+        "rotate": 45
+      }
+    },
+    "yAxis": {
+      "type": "value"
+    },
+    "series": [
+      {
+        "name": "Mean",
+        "type": "bar",
+        "data": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
+      {
+        "name": "Std",
+        "type": "bar",
+        "data": [
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2026_second_round",
+    "dataset_label": "taac2026_second_round (1,000 rows)",
+    "run_tag": null,
+    "generated_at": "2026-06-17T14:27:11.642751+00:00",
+    "sample_strategy": "none",
+    "total_rows": 1000,
+    "sample_ratio": 1.0,
+    "strat_rows": 1000,
+    "tail_rows": 0,
+    "union_rows": 1000,
+    "seed": 42,
+    "total_users": 1000,
+    "total_items": 968
+  }
+}

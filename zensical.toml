@@ -32,6 +32,9 @@ nav = [
     "project/development.md",
     "project/models.md",
   ]},
+  { "Analysis" = [
+    "analysis/index.md",
+  ]},
   { "Operations" = [
     "operations/overview.md",
     "operations/maintenance.md",

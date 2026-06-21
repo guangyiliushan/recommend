@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import traceback
+import tracemalloc
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -42,6 +44,7 @@ from recsys.evaluation.evaluator import (
     EvaluationResult,
     evaluate,
 )
+from recsys.utils.progress import phase_timer
 
 # ============================================================================
 # 阶段与状态枚举
@@ -177,6 +180,9 @@ class ExperimentRunMeta:
     started_at: str = ""
     finished_at: str = ""
     duration_seconds: float = 0.0
+
+    # 内存指标（v2 新增）
+    peak_memory_mb: Optional[float] = None
 
     # 数据指标
     num_users: int = 0
@@ -444,7 +450,6 @@ def bootstrap_registries() -> None:
 
 def setup_runtime(runtime_config: Dict[str, Any]) -> None:
     """根据 runtime_config 设置 seed、device、日志级别等。"""
-    import logging
     import random
 
     import numpy as np
@@ -473,18 +478,31 @@ def setup_runtime(runtime_config: Dict[str, Any]) -> None:
 # 适配层 —— 从 dataset split 提取经典模型需要的交互数据
 # ============================================================================
 
+logger = logging.getLogger(__name__)
+
 def extract_interactions_from_split(split_dataset: Any) -> List[Tuple[int, int]]:
     """从 dataset split 中提取 (user_id, item_id) 列表。
 
     适用于 ItemCF、MF 等需要用户-物品交互对的经典方法。
     遍历 split 的每个样本，收集 user_id 和 item_id。
+
+    如果 split 提供 iter_user_item_pairs_fast() 方法（紧凑映射），
+    则走快速路径跳过逐个 __getitem__ 调用。
     """
+    # 快速路径：紧凑映射直接提取，避免 71M 次 __getitem__
+    if hasattr(split_dataset, "iter_user_item_pairs_fast"):
+        size = len(split_dataset)
+        logger.info(
+            "Extracting interactions via fast path (%d positions)",
+            size,
+        )
+        return list(split_dataset.iter_user_item_pairs_fast())
+
     pairs: List[Tuple[int, int]] = []
     for sample in split_dataset:
         uid = sample.get("user_id")
         iid = sample.get("item_id")
         if uid is not None and iid is not None:
-            # 处理 tensor 或标量
             uid_val = uid.item() if hasattr(uid, "item") else int(uid)
             iid_val = iid.item() if hasattr(iid, "item") else int(iid)
             pairs.append((uid_val, iid_val))
@@ -497,7 +515,12 @@ def extract_user_item_mapping_from_split(
     """从 dataset split 中提取 user_id -> set(item_ids) 映射。
 
     适用于 ItemCF.predict() 的用户历史触发和 ground truth 构造。
+    如果 split 提供 extract_user_item_mapping_fast() 方法，走快速路径。
     """
+    if hasattr(split_dataset, "extract_user_item_mapping_fast"):
+        logger.info("Extracting user-item mapping via fast path")
+        return split_dataset.extract_user_item_mapping_fast()
+
     mapping: Dict[int, Set[int]] = {}
     for sample in split_dataset:
         uid = sample.get("user_id")
@@ -593,27 +616,75 @@ def _execute_nontrainable_path(
     当前支持 interaction-group 适配：
     从 train split 提取交互对 → model.fit() →
     从 test split 提取映射 → model.predict() → PredictionBundle
+
+    优化：如果 split 提供 extract_user_item_mapping_fast()，直接传递
+    user_items_dict 给 model.fit()，跳过中间 List[Tuple] 转换。
     """
     train_split = dataset.get_split("train")
     test_split = dataset.get_split("test")
 
-    # 1. fit
-    train_pairs = extract_interactions_from_split(train_split)
-    if not train_pairs:
-        raise RuntimeError(
-            "无法从 train split 提取 (user_id, item_id) 交互对。"
-            "请确认数据集 schema 包含 user_id 和 item_id 字段。"
-        )
-    model.fit(train_pairs)
+    # 1. fit — 优先使用紧凑映射直接传递
+    if hasattr(train_split, "extract_user_item_mapping_fast"):
+        logger.info("Using compact user_items_dict for fit()")
+        train_mapping = train_split.extract_user_item_mapping_fast()
+        if not train_mapping:
+            raise RuntimeError(
+                "无法从 train split 提取用户-物品映射。"
+                "请确认数据集 schema 包含 user_id 和 item_id 字段。"
+            )
+        # 检查模型是否支持 user_items_dict 参数
+        import inspect
+        sig = inspect.signature(model.fit)
+        if "user_items_dict" in sig.parameters:
+            model.fit(user_items_dict=train_mapping)
+        else:
+            # 回退：转换为 List[Tuple]
+            logger.info("Model doesn't support user_items_dict, converting to pairs")
+            pairs = []
+            for uid, items in train_mapping.items():
+                for iid in items:
+                    pairs.append((uid, iid))
+            model.fit(user_item_pairs=pairs)
+    else:
+        train_pairs = extract_interactions_from_split(train_split)
+        if not train_pairs:
+            raise RuntimeError(
+                "无法从 train split 提取 (user_id, item_id) 交互对。"
+                "请确认数据集 schema 包含 user_id 和 item_id 字段。"
+            )
+        model.fit(user_item_pairs=train_pairs)
+        train_mapping = extract_user_item_mapping_from_split(train_split)
 
-    # 2. predict
-    train_mapping = extract_user_item_mapping_from_split(train_split)
-    test_mapping = extract_user_item_mapping_from_split(test_split)
+    # 2. predict — 需要转换为 Set[int] 用于 O(1) 查找
+    if hasattr(test_split, "extract_user_item_mapping_fast"):
+        test_mapping_raw = test_split.extract_user_item_mapping_fast()
+        # 转换 np.ndarray → set
+        test_mapping = {
+            uid: set(items.tolist()) if hasattr(items, "tolist") else set(items)
+            for uid, items in test_mapping_raw.items()
+        }
+        # train_mapping 也需要转换为 set（用于 predict 中的过滤）
+        train_mapping_for_predict = {
+            uid: set(items.tolist()) if hasattr(items, "tolist") else set(items)
+            for uid, items in train_mapping.items()
+        }
+    else:
+        test_mapping = extract_user_item_mapping_from_split(test_split)
+        train_mapping_for_predict = train_mapping
 
-    return model.predict(
-        user_train_items=train_mapping,
+    bundle = model.predict(
+        user_train_items=train_mapping_for_predict,
         user_test_items=test_mapping,
     )
+
+    if bundle.task_type == "ranking" and not bundle.group_ids:
+        logger.warning(
+            "模型 %s 在数据集 %s 上产出空预测结果（无 group_ids），"
+            "可能因数据过于稀疏或用户历史与候选池无共现",
+            config.model_name, config.dataset_name,
+        )
+
+    return bundle
 
 
 def _assemble_bundle_from_predictions(
@@ -750,39 +821,46 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
     logs_dir = run_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
 
+    # 阶段耗时记录
+    phase_durations: Dict[str, float] = {}
+
     # 阶段执行包装器
     def _run_phase(
         phase: ExperimentPhase,
         fn: Callable[[], Any],
     ) -> Any:
-        try:
-            return fn()
-        except Exception as exc:
-            err = ExperimentError(
-                code=_phase_to_error_code(phase),
-                phase=phase,
-                message=str(exc),
-                hint=None,
-                traceback=traceback.format_exc(),
-            )
-            # 写失败状态
-            write_status_file(
-                run_dir,
-                ExperimentStatus.FAILED,
-                run_id=run_id,
-                dataset=config.dataset_name,
-                model=config.model_name,
-                seed=config.seed,
-                started_at=started_at,
-                error=err,
-            )
-            # 记日志
-            (logs_dir / "stderr.log").write_text(
-                err.traceback or "", encoding="utf-8"
-            )
-            result.status = ExperimentStatus.FAILED
-            result.error = err
-            raise  # 重新抛出，由最外层统一捕获
+        with phase_timer(phase.value, phase_durations):
+            try:
+                return fn()
+            except Exception as exc:
+                err = ExperimentError(
+                    code=_phase_to_error_code(phase),
+                    phase=phase,
+                    message=str(exc),
+                    hint=None,
+                    traceback=traceback.format_exc(),
+                )
+                # 写失败状态
+                write_status_file(
+                    run_dir,
+                    ExperimentStatus.FAILED,
+                    run_id=run_id,
+                    dataset=config.dataset_name,
+                    model=config.model_name,
+                    seed=config.seed,
+                    started_at=started_at,
+                    error=err,
+                )
+                # 记日志
+                (logs_dir / "stderr.log").write_text(
+                    err.traceback or "", encoding="utf-8"
+                )
+                result.status = ExperimentStatus.FAILED
+                result.error = err
+                raise  # 重新抛出，由最外层统一捕获
+
+    # 初始化内存追踪变量（在 try 块外定义，异常时默认为 None）
+    peak_memory_mb = None
 
     try:
         # ---- 2. registry bootstrap ----
@@ -806,16 +884,21 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         )
 
         # ---- 6. dataset 构建 ----
+        # 启动 tracemalloc 追踪全链路内存
+        tracemalloc.start()
+
         def _build_dataset() -> BaseDataset:
             ds_cls = DATASET_REGISTRY.get(config.dataset_name)
             ds = ds_cls(
                 root_dir=config.data_config.get("root_dir", "./data"),
+                split_mode=config.data_config.get("split_mode", "temporal"),
                 split_ratios=tuple(
                     config.data_config.get("split_ratios", (0.8, 0.1, 0.1))
                 ),
                 max_seq_len=config.data_config.get("max_seq_len", 50),
                 min_seq_len=config.data_config.get("min_seq_len", 2),
                 neg_sample_count=config.data_config.get("neg_sample_count", 4),
+                min_action_type=config.data_config.get("min_action_type", 0),
                 **config.data_config.get("extra", {}),
             )
             ds.load()
@@ -832,6 +915,12 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
                     "num_users": dataset.num_users,
                     "num_items": dataset.num_items,
                     "feature_cols": dataset.feature_cols,
+                    # ID 空间元信息 — 用 getattr 兼容非 TAAC2026 数据集
+                    "padding_idx": getattr(dataset, "_padding_idx", 0),
+                    "user_id_space": getattr(dataset, "_user_id_space", "raw"),
+                    "item_id_space": getattr(dataset, "_item_id_space", "raw"),
+                    "max_user_id": getattr(dataset, "_num_users", dataset.num_users),
+                    "max_item_id": getattr(dataset, "_num_items", dataset.num_items),
                     **config.model_config.get("schema_extra", {}),
                 },
             )
@@ -881,6 +970,11 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
             return evaluate(bundle, eval_cfg)
 
         eval_result = _run_phase(ExperimentPhase.EVALUATION, _run_evaluation)
+
+        # 停止 tracemalloc，捕获全链路峰值内存
+        _, peak_bytes = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_memory_mb = peak_bytes / (1024 * 1024) if peak_bytes > 0 else None
 
         # ---- 10. artifact 落盘 ----
         def _write_artifacts() -> None:
@@ -942,6 +1036,8 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         result.metadata.update({
             "finished_at": finished_at,
             "duration_seconds": duration,
+            "peak_memory_mb": peak_memory_mb,  # v2: tracemalloc 峰值内存
+            "phase_durations": phase_durations,  # v3: 各阶段耗时
             "primary_metric": primary_metric,
             "primary_metric_value": primary_value,
             "num_samples": bundle.num_samples,

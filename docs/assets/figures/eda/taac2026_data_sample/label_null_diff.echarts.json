@@ -1,0 +1,55 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Null Rate Gap by Label"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "user_int_feats_104\n(1↔2)",
+        "user_int_feats_96\n(1↔2)",
+        "user_int_feats_80\n(1↔2)",
+        "user_int_feats_105\n(1↔2)",
+        "user_int_feats_92\n(1↔2)"
+      ],
+      "axisLabel": {
+        "rotate": 45,
+        "fontSize": 10
+      }
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "|Δ Null Rate|"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          0.084,
+          0.073,
+          0.0718,
+          0.0674,
+          0.0621
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2026_data_sample",
+    "dataset_label": "taac2026_data_sample (1,000 rows)",
+    "run_tag": null,
+    "generated_at": "2026-06-17T13:44:21.005475+00:00",
+    "sample_strategy": "none",
+    "total_rows": 1000,
+    "sample_ratio": 1.0,
+    "strat_rows": 1000,
+    "tail_rows": 0,
+    "union_rows": 1000,
+    "seed": 42,
+    "total_users": 1000,
+    "total_items": 837
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Column Layout Overview"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "core",
+        "user_feat",
+        "item_feat",
+        "domain_seq"
+      ]
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "Column Count"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          2,
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "movielens_1m",
+    "dataset_label": "movielens_1m (796,244 rows)",
+    "run_tag": null,
+    "generated_at": "2026-06-21T03:54:22.556114+00:00",
+    "sample_strategy": "none",
+    "total_rows": 50000,
+    "sample_ratio": 1.0,
+    "strat_rows": 50000,
+    "tail_rows": 0,
+    "union_rows": 50000,
+    "seed": 42,
+    "total_users": 5626,
+    "total_items": 2922
+  }
+}

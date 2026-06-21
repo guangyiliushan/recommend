@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -392,29 +393,34 @@ def execute_runs_parallel(
     total = len(plans)
     tqdm = _try_import_tqdm()
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_execute_one, plan, i, total): (i, plan)
-            for i, plan in enumerate(plans)
-        }
+    # 并发执行时静默 ItemCF 等模型的内部进度条
+    os.environ["RECSYS_BENCHMARK_MODE"] = "1"
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(_execute_one, plan, i, total): (i, plan)
+                for i, plan in enumerate(plans)
+            }
 
-        with tqdm(total=total, desc="Benchmark", unit="run") as pbar:
-            for future in as_completed(futures):
-                i, plan = futures[future]
-                try:
-                    result = future.result()
-                except Exception:
-                    result = ExperimentResult(
-                        run_id=plan.run_id,
-                        status=ExperimentStatus.FAILED,
-                        metadata={
-                            "dataset_name": plan.config.dataset_name,
-                            "model_name": plan.config.model_name,
-                            "seed": plan.config.seed,
-                        },
-                    )
-                results.append((i, result))
-                pbar.update(1)
+            with tqdm(total=total, desc="Benchmark", unit="run") as pbar:
+                for future in as_completed(futures):
+                    i, plan = futures[future]
+                    try:
+                        result = future.result()
+                    except Exception:
+                        result = ExperimentResult(
+                            run_id=plan.run_id,
+                            status=ExperimentStatus.FAILED,
+                            metadata={
+                                "dataset_name": plan.config.dataset_name,
+                                "model_name": plan.config.model_name,
+                                "seed": plan.config.seed,
+                            },
+                        )
+                    results.append((i, result))
+                    pbar.update(1)
+    finally:
+        os.environ.pop("RECSYS_BENCHMARK_MODE", None)
 
     # 按原始顺序排序
     results.sort(key=lambda x: x[0])

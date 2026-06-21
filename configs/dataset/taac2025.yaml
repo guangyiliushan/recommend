@@ -1,3 +1,4 @@
+# @package _global_
 # TAAC 2025 advertising dataset config
 # Full-modal generative recommendation dataset from TencentGR
 # Multi-modal features: text, image, video ad creatives
@@ -12,12 +13,13 @@
 #
 # Reference: arxiv:2604.04976
 
-name: "taac2025_10M"
-version: "10M"
-data_dir: "./data"
-split_ratios: [0.8, 0.1, 0.1]
-batch_size: 64
-num_workers: 4
-max_seq_len: 50
-min_seq_len: 5
-neg_sample_count: 4
+data:
+  name: "taac2025_1M"
+  data_dir: "./data"
+  split_ratios: [0.8, 0.1, 0.1]
+  batch_size: 64
+  num_workers: 4
+  max_seq_len: 50
+  min_seq_len: 5
+  neg_sample_count: 4
+  min_action_type: 0

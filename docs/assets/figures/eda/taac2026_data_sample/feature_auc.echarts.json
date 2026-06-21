@@ -1,0 +1,106 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Single Feature AUC"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "item_int_feats_13",
+        "item_int_feats_9",
+        "item_int_feats_16",
+        "user_int_feats_94",
+        "item_int_feats_6",
+        "user_int_feats_86",
+        "user_int_feats_108",
+        "user_int_feats_97",
+        "user_int_feats_52",
+        "user_int_feats_4",
+        "user_int_feats_109",
+        "user_int_feats_54",
+        "user_int_feats_82",
+        "user_int_feats_96",
+        "user_int_feats_48",
+        "user_int_feats_1",
+        "item_int_feats_12",
+        "user_int_feats_98",
+        "item_int_feats_85",
+        "user_int_feats_92",
+        "user_int_feats_107",
+        "user_int_feats_58",
+        "user_int_feats_99",
+        "user_int_feats_101",
+        "user_int_feats_50",
+        "user_int_feats_102",
+        "user_int_feats_100",
+        "user_int_feats_51",
+        "item_int_feats_83",
+        "item_int_feats_8"
+      ],
+      "axisLabel": {
+        "rotate": 45
+      }
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "AUC",
+      "min": 0,
+      "max": 1
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          0.6111,
+          0.5561,
+          0.5406,
+          0.5376,
+          0.5335,
+          0.5324,
+          0.5263,
+          0.5249,
+          0.5241,
+          0.5162,
+          0.5155,
+          0.5119,
+          0.5116,
+          0.5107,
+          0.5091,
+          0.507,
+          0.5007,
+          0.5001,
+          0.5001,
+          0.5,
+          0.4992,
+          0.4988,
+          0.4988,
+          0.4977,
+          0.4965,
+          0.4954,
+          0.4948,
+          0.4943,
+          0.4924,
+          0.4917
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2026_data_sample",
+    "dataset_label": "taac2026_data_sample (1,000 rows)",
+    "run_tag": null,
+    "generated_at": "2026-06-17T13:44:21.005475+00:00",
+    "sample_strategy": "none",
+    "total_rows": 1000,
+    "sample_ratio": 1.0,
+    "strat_rows": 1000,
+    "tail_rows": 0,
+    "union_rows": 1000,
+    "seed": 42,
+    "total_users": 1000,
+    "total_items": 837
+  }
+}

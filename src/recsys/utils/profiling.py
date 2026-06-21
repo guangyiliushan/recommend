@@ -334,6 +334,7 @@ def _estimate_flops(
     # 优先使用 thop
     try:
         from thop import profile  # type: ignore[import-untyped]
+
         # thop 需要 tuple/list 形式的输入而非 dict
         inputs = tuple(input_sample.values())
         flops, _ = profile(model, inputs=inputs, verbose=False)

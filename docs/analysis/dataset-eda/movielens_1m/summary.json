@@ -1,0 +1,102 @@
+{
+  "overview": {
+    "total_rows": 50000,
+    "total_columns": 2,
+    "column_groups": {
+      "core": [
+        "user_id",
+        "item_id"
+      ],
+      "user_feat": [],
+      "item_feat": [],
+      "domain_seq": []
+    },
+    "memory_usage_mb": 0.76,
+    "has_label": false,
+    "has_timestamp": false,
+    "suspected_multimodal_embeddings": [],
+    "skipped": false,
+    "skip_reason": null
+  },
+  "missing": {
+    "column_missing_rates": {
+      "user_id": 0.0,
+      "item_id": 0.0
+    },
+    "overall_missing_rate": 0.0,
+    "co_missing_pairs": [],
+    "null_rate_by_label": null,
+    "coverage_matrix": {
+      "user_id": 1.0,
+      "item_id": 1.0
+    },
+    "label_null_diff": [],
+    "skipped": false,
+    "skip_reason": null
+  },
+  "distribution": {
+    "label_distribution": {},
+    "feature_cardinality": {
+      "user_id": 5626,
+      "item_id": 2922
+    },
+    "cardinality_bins": {
+      "1-10": 0,
+      "11-100": 0,
+      "101-1K": 0,
+      "1K-10K": 2,
+      "10K-100K": 0,
+      "100K+": 0
+    },
+    "dense_stats": {},
+    "skipped": false,
+    "skip_reason": null
+  },
+  "sequence": {
+    "domain_lengths": {},
+    "seq_repeat_rates": {},
+    "has_sequences": false,
+    "skipped": true,
+    "skip_reason": "No columns found matching pattern 'domain_'."
+  },
+  "effectiveness": {
+    "feature_auc": {},
+    "skipped_features": {},
+    "skipped": true,
+    "skip_reason": "Label column 'label_type' not found in DataFrame."
+  },
+  "user_item": {
+    "user_activity": {
+      "mean": 8.89,
+      "p50": 5.0,
+      "p75": 11.0,
+      "p95": 29.75,
+      "p99": 48.0,
+      "max": 108.0,
+      "total_users": 5626.0
+    },
+    "item_popularity": {
+      "mean": 17.11,
+      "p50": 10.0,
+      "p75": 22.0,
+      "p95": 59.0,
+      "p99": 102.79,
+      "max": 187.0,
+      "total_items": 2922.0
+    },
+    "cross_domain_overlap": null,
+    "skipped": false,
+    "skip_reason": null
+  },
+  "sample_metadata": {
+    "sample_strategy": "none",
+    "total_rows": 50000,
+    "sample_ratio": 1.0,
+    "strat_rows": 50000,
+    "tail_rows": 0,
+    "union_rows": 50000,
+    "seed": 42,
+    "total_users": 5626,
+    "total_items": 2922
+  }
+}

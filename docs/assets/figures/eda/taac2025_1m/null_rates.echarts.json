@@ -1,0 +1,48 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Feature Missing Rates"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "user_id",
+        "seq"
+      ],
+      "axisLabel": {
+        "rotate": 45
+      }
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "Missing Rate"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          0.0,
+          0.0
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2025_1m",
+    "dataset_label": "taac2025_1M (1,001,845 rows)",
+    "run_tag": null,
+    "generated_at": "2026-06-17T15:45:55.217885+00:00",
+    "sample_strategy": "none",
+    "total_rows": 500000,
+    "sample_ratio": 1.0,
+    "strat_rows": 500000,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": 500000,
+    "total_items": null
+  }
+}

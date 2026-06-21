@@ -49,7 +49,7 @@ RecBench 是一个推荐系统 Benchmark 与工程框架项目，目标是在统
 |-- scripts/                  # CLI 实验入口（run_single / run_benchmark）
 |-- src/recsys/
 |   |-- core/                 # 注册表、基础契约、PredictionBundle
-|   |-- data/                 # Dataset adapter 与数据注册
+|   |-- data/                 # Dataset adapter 与离线大数据预处理（chunked read、格式转换、特征工程、负采样、缓存/checkpoint、数据库导出）
 |   |-- evaluation/           # 指标、evaluator、ranking、visualization
 |   |-- models/               # 模型家族与注册入口
 |   |-- pipeline/             # 单实验、Benchmark、Reporter
@@ -169,6 +169,9 @@ uv run python scripts/run_single.py --model dssm --dataset taac2026_data_sample 
 
 # 批量 Benchmark
 uv run python scripts/run_benchmark.py --config configs/experiment/benchmark_classical.yaml
+
+# 数据流水线 Benchmark（格式/压缩/后端对比）
+uv run python scripts/benchmark_data_pipeline.py --rows 1000000
 ```
 
 ## 文档入口

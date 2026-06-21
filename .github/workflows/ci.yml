@@ -127,7 +127,7 @@ jobs:
           -m "${{ env.DEFAULT_TEST_SELECTOR }}"
 
   integration:
-    name: 集成测试 (Python ${{ env.CI_CANONICAL_PYTHON_VERSION }})
+    name: 集成测试 (Python 3.13)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -170,7 +170,7 @@ jobs:
           -m "${{ env.INTEGRATION_TEST_SELECTOR }}"
 
   coverage:
-    name: 覆盖率 (Python ${{ env.CI_CANONICAL_PYTHON_VERSION }})
+    name: 覆盖率 (Python 3.13)
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
