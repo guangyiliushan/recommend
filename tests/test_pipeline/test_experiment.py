@@ -136,7 +136,8 @@ def test_run_experiment_itemcf_real(tmp_path, monkeypatch):
 def test_pipeline_passes_dense_remap_metadata_to_hyformer(monkeypatch):
     """确认 pipeline 把 TAAC2026 dense remap 元信息正确传给 HyFormer。"""
     import torch
-    from torch.utils.data import Dataset as TorchDataset, DataLoader
+    from torch.utils.data import DataLoader
+    from torch.utils.data import Dataset as TorchDataset
 
     from recsys import auto_discover_models
     from recsys.core.registry import DATASET_REGISTRY, MODEL_REGISTRY
@@ -210,7 +211,7 @@ def test_pipeline_passes_dense_remap_metadata_to_hyformer(monkeypatch):
         evaluation_config={"generate_curves": False},
         model_config={"params": {"d_model": 8, "emb_dim": 8}},
     )
-    result = run_experiment(cfg)
+    _result = run_experiment(cfg)  # noqa: F841
 
     assert "received" in captured_meta, "pipeline 应调用 model_cls(schema_metadata=...)"
     meta = captured_meta["received"]

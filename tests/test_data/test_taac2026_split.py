@@ -1,9 +1,9 @@
 """TAAC2026 _TabularSplit 快速提取方法 + ID dense remap 测试。"""
 
 from recsys.data.datasets.taac2026 import (
-    _TabularSplit,
     _build_dense_id_map,
     _remap_rows_inplace,
+    _TabularSplit,
 )
 
 

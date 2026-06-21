@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
 import torch
@@ -305,7 +306,6 @@ class _TabularSplit(Dataset[Dict[str, torch.Tensor]]):
         dict[int, set[int]]
             用户到物品集合的映射。
         """
-        from collections import defaultdict
         mapping: dict = defaultdict(set)
         for row in self._rows:
             mapping[_safe_int(row.get("user_id"))].add(
