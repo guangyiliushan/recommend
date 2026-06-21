@@ -186,3 +186,101 @@ class TestHyFormerModelRegistry:
         assert MODEL_REGISTRY.get_metadata("hyformer")["family"] == "unified"
         assert MODEL_REGISTRY.get_metadata("hyformer")["task_type"] == "pointwise"
         assert MODEL_REGISTRY.get_metadata("hyformer")["supports_training"] is True
+
+
+# ------------------------------------------------------------------
+# ID 边界校验测试
+# ------------------------------------------------------------------
+
+class TestHyFormerIDValidation:
+    """HyFormer ID 边界校验测试。"""
+
+    def test_raises_on_out_of_range_user_id(self):
+        """user_id 超过 embedding 范围时抛出 ValueError。"""
+        hyformer_cls = get_model("hyformer")
+        model = hyformer_cls(
+            config={"d_model": 32, "emb_dim": 32},
+            schema_metadata={
+                "num_users": 2,
+                "num_items": 2,
+                "user_id_space": "dense_1_based",
+                "item_id_space": "dense_1_based",
+                "max_user_id": 2,
+                "max_item_id": 2,
+            },
+        )
+        # user_emb 大小为 2+1=3，所以 id>=3 越界
+        batch = Batch(data={
+            "user_id": torch.tensor([1, 2, 5], dtype=torch.long),
+            "item_id": torch.tensor([1, 1, 1], dtype=torch.long),
+            "label": torch.tensor([0.0, 1.0, 0.0]),
+        })
+        with pytest.raises(ValueError, match="ID 越界"):
+            model(batch)
+
+    def test_raises_on_out_of_range_item_id(self):
+        """item_id 超过 embedding 范围时抛出 ValueError。"""
+        hyformer_cls = get_model("hyformer")
+        model = hyformer_cls(
+            config={"d_model": 32, "emb_dim": 32},
+            schema_metadata={
+                "num_users": 2,
+                "num_items": 2,
+                "user_id_space": "dense_1_based",
+                "item_id_space": "dense_1_based",
+                "max_user_id": 2,
+                "max_item_id": 2,
+            },
+        )
+        batch = Batch(data={
+            "user_id": torch.tensor([1, 1], dtype=torch.long),
+            "item_id": torch.tensor([1, 3], dtype=torch.long),
+            "label": torch.tensor([0.0, 1.0]),
+        })
+        with pytest.raises(ValueError, match="ID 越界"):
+            model(batch)
+
+    def test_raises_on_negative_id(self):
+        """负数 ID 抛出 ValueError。"""
+        hyformer_cls = get_model("hyformer")
+        model = hyformer_cls(
+            config={"d_model": 32, "emb_dim": 32},
+            schema_metadata={
+                "num_users": 2,
+                "num_items": 2,
+                "user_id_space": "dense_1_based",
+                "max_user_id": 2,
+                "max_item_id": 2,
+            },
+        )
+        batch = Batch(data={
+            "user_id": torch.tensor([-1, 1], dtype=torch.long),
+            "item_id": torch.tensor([1, 1], dtype=torch.long),
+            "label": torch.tensor([0.0, 1.0]),
+        })
+        with pytest.raises(ValueError, match="ID 越界"):
+            model(batch)
+
+    def test_valid_ids_still_work(self):
+        """合法范围内的 ID 正常前向。"""
+        hyformer_cls = get_model("hyformer")
+        model = hyformer_cls(
+            config={"d_model": 32, "emb_dim": 32},
+            schema_metadata={
+                "num_users": 10,
+                "num_items": 50,
+                "user_id_space": "dense_1_based",
+                "item_id_space": "dense_1_based",
+                "max_user_id": 10,
+                "max_item_id": 50,
+            },
+        )
+        batch = Batch(data={
+            "user_id": torch.randint(0, 11, (16,)),
+            "item_id": torch.randint(0, 51, (16,)),
+            "label": torch.randint(0, 2, (16,)).float(),
+        })
+        output = model(batch)
+        assert isinstance(output, ModelOutput)
+        assert output.scores is not None
+        assert output.scores.shape == (16,)

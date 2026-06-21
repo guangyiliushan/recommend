@@ -104,6 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         help="最小行为类型 (0=全部, 1=仅点击) — TAAC2025 隐式反馈推荐建议设为 1",
     )
+    data_group.add_argument(
+        "--split-mode",
+        choices=["temporal", "random"],
+        default="temporal",
+        help="数据切分方式：temporal（时序默认）/ random（随机）",
+    )
 
     # 运行时参数
     runtime_group = parser.add_argument_group("Runtime")
@@ -233,7 +239,7 @@ def main() -> None:
         model_name=args.model,
         seed=args.seed,
         output_dir=args.output_dir,
-        data_config={"root_dir": args.data_root, "min_action_type": args.min_action_type},
+        data_config={"root_dir": args.data_root, "min_action_type": args.min_action_type, "split_mode": args.split_mode},
         training_config={
             "epochs": args.epochs,
             "batch_size": args.batch_size,

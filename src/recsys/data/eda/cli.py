@@ -1,4 +1,4 @@
-﻿"""EDA module CLI 鈥?command-line entry point for dataset exploratory data analysis.
+"""EDA module CLI 鈥?command-line entry point for dataset exploratory data analysis.
 
 Entry point registered in pyproject.toml:
     recsys-dataset-eda = "recsys.data.eda.cli:main"
@@ -134,6 +134,25 @@ def _extract_dataframe(
         if isinstance(val, pd.DataFrame):
             return val, None
 
+        # Case 4: List of lists (e.g. MovieLens JSON: [[item1, item2], ...])
+        if isinstance(val, list) and len(val) > 0 and isinstance(val[0], list):
+            records = []
+            for user_idx, items in enumerate(val):
+                for item_id in items:
+                    records.append({"user_id": user_idx, "item_id": int(item_id)})
+            df = pd.DataFrame(records)
+            if len(df) > max_rows:
+                indices = sorted(
+                    rng.choice(len(df), max_rows, replace=False).tolist()
+                )
+                df = df.iloc[indices].reset_index(drop=True)
+                load_meta = {"original_rows": len(records), "sampled_at_load": True}
+                logger.info(
+                    "Pre-sampled list-of-lists: %d → %d rows.",
+                    len(records), max_rows,
+                )
+            return df, load_meta
+
     # Try any value from the dict as last resort
     for val in raw.values():
         if hasattr(val, "select") and hasattr(val, "to_pandas"):
@@ -157,6 +176,24 @@ def _extract_dataframe(
             return val.to_pandas(), load_meta
         if hasattr(val, "to_pandas"):
             return val.to_pandas(), None
+        # Case 4 (last resort): List of lists
+        if isinstance(val, list) and len(val) > 0 and isinstance(val[0], list):
+            records = []
+            for user_idx, items in enumerate(val):
+                for item_id in items:
+                    records.append({"user_id": user_idx, "item_id": int(item_id)})
+            df = pd.DataFrame(records)
+            if len(df) > max_rows:
+                indices = sorted(
+                    rng.choice(len(df), max_rows, replace=False).tolist()
+                )
+                df = df.iloc[indices].reset_index(drop=True)
+                load_meta = {"original_rows": len(records), "sampled_at_load": True}
+                logger.info(
+                    "Pre-sampled list-of-lists (last resort): %d → %d rows.",
+                    len(records), max_rows,
+                )
+            return df, load_meta
         if isinstance(val, pd.DataFrame):
             return val, None
 

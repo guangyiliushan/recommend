@@ -915,6 +915,12 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
                     "num_users": dataset.num_users,
                     "num_items": dataset.num_items,
                     "feature_cols": dataset.feature_cols,
+                    # ID 空间元信息 — 用 getattr 兼容非 TAAC2026 数据集
+                    "padding_idx": getattr(dataset, "_padding_idx", 0),
+                    "user_id_space": getattr(dataset, "_user_id_space", "raw"),
+                    "item_id_space": getattr(dataset, "_item_id_space", "raw"),
+                    "max_user_id": getattr(dataset, "_num_users", dataset.num_users),
+                    "max_item_id": getattr(dataset, "_num_items", dataset.num_items),
                     **config.model_config.get("schema_extra", {}),
                 },
             )

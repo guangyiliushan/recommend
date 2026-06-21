@@ -1,9 +1,11 @@
 # Benchmark: Deep CTR Era (2016–2019)
 # Models: YouTube DNN, Wide&Deep, DeepFM, DIN, DIEN, DLRM
 #
-# 当前状态：DeepFM/DIN/DLRM 等 deep_ctr 模型均为占位实现，
-# register 装饰器被注释，未生效。hyformer 作为唯一可用的训练型基线纳入。
-# 待 deep_ctr 模型实现后替换。
+# HyFormer 专用数据集（点式 / 表格格式，CTR/CVR 预测）:
+#   - taac2026_data_sample:  1k 行 × 120 列（CTR/CVR）
+#   - taac2026_second_round: 1k 行 × 142 列（含 domain 序列）
+#
+# 注意：DeepFM/DIN/DLRM 等占位模型实现前，仅 hyformer 可运行。
 
 experiment:
   name: "benchmark_deep_ctr"
@@ -13,6 +15,7 @@ experiment:
 
 datasets:
   - "taac2026_data_sample"
+  - "taac2026_second_round"
 
 models:
   - name: "hyformer"

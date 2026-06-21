@@ -84,6 +84,23 @@ class HyFormerAdapter(NeuralRecommender):
             schema_metadata.get("num_items", 10000) if schema_metadata else 10000
         )
 
+        # 保存 ID 空间元信息（用于前向边界校验与调试）
+        self.user_id_space = (
+            schema_metadata.get("user_id_space", "raw") if schema_metadata else "raw"
+        )
+        self.item_id_space = (
+            schema_metadata.get("item_id_space", "raw") if schema_metadata else "raw"
+        )
+        self.padding_idx = (
+            schema_metadata.get("padding_idx", 0) if schema_metadata else 0
+        )
+        self.max_user_id = (
+            schema_metadata.get("max_user_id", num_users) if schema_metadata else num_users
+        )
+        self.max_item_id = (
+            schema_metadata.get("max_item_id", num_items) if schema_metadata else num_items
+        )
+
         # Embedding 层（稀疏参数）
         self.user_emb = nn.Embedding(num_users + 1, self.emb_dim, padding_idx=0)
         self.item_emb = nn.Embedding(num_items + 1, self.emb_dim, padding_idx=0)
@@ -130,6 +147,10 @@ class HyFormerAdapter(NeuralRecommender):
         user_id = user_id.long()
         item_id = item_id.long()
 
+        # ---- 显式边界校验：防止稀疏/未 remap ID 导致越界 ----
+        self._validate_ids(user_id, "user")
+        self._validate_ids(item_id, "item")
+
         # 用户塔
         user_emb = self.user_emb(user_id)  # (B, emb_dim)
         user_vec = self.user_proj(user_emb)  # (B, d_model)
@@ -144,6 +165,46 @@ class HyFormerAdapter(NeuralRecommender):
         scores = (user_vec * item_vec).sum(dim=-1)  # (B,)
 
         return ModelOutput(scores=scores)
+
+    def _validate_ids(self, ids: Tensor, kind: str) -> None:
+        """校验 ID tensor 是否在 embedding 可索引范围内。
+
+        若 ID 越界或为负数，抛出带上下文信息的 ValueError，
+        替代 PyTorch 底层 IndexError，便于快速定位数据契约问题。
+
+        Parameters
+        ----------
+        ids : Tensor
+            user_id 或 item_id tensor，shape (B,)。
+        kind : str
+            ``"user"`` 或 ``"item"``，仅用于错误消息。
+        """
+        emb = self.user_emb if kind == "user" else self.item_emb
+        num_embeddings = emb.num_embeddings
+        id_space = self.user_id_space if kind == "user" else self.item_id_space
+        declared_count = self.max_user_id if kind == "user" else self.max_item_id
+
+        if ids.numel() == 0:
+            return
+
+        min_id = ids.min().item()
+        max_id = ids.max().item()
+
+        errors: List[str] = []
+        if min_id < 0:
+            errors.append(f"存在负值 {kind}_id (最小 {min_id})")
+        if max_id >= num_embeddings:
+            errors.append(
+                f"{kind}_id 最大值 {max_id} >= embedding 大小 {num_embeddings}"
+            )
+
+        if errors:
+            raise ValueError(
+                f"HyFormer {kind} ID 越界：{'；'.join(errors)}。"
+                f"id_space={id_space}，schema_metadata 中声明的 num_{kind}s={declared_count}，"
+                f"batch 范围=[{min_id}, {max_id}]。"
+                f"请确认数据集是否已完成 dense remap（0 为 padding）。"
+            )
 
     def compute_loss(
         self,

@@ -1,0 +1,21 @@
+# @package _global_
+# MovieLens-1M (RecZoo) — 经典序列推荐数据集
+#
+# 6,040 users, ~3,900 items, ~1M implicit interactions
+# 数据格式: JSON 二维数组 [[item1, item2, ...], ...]
+# 预切分为 train/val/test，适合 ItemCF 等序列推荐模型
+#
+# 引用:
+#   F. Maxwell Harper and Joseph A. Konstan. 2015.
+#   The MovieLens Datasets: History and Context.
+#   ACM Trans. Interact. Intell. Syst. 5, 4, Article 19 (December 2015).
+#
+# Source: https://grouplens.org/datasets/movielens/1m/
+# HF Mirror: https://huggingface.co/datasets/reczoo/Movielens1M_m1
+
+data:
+  name: "movielens_1m"
+  data_dir: "./data"
+  max_seq_len: 50
+  min_seq_len: 2
+  neg_sample_count: 4
