@@ -5,6 +5,10 @@ site_name = "RecBench Documentation"
 site_description = "Engineering and maintenance documentation for the RecBench recommendation benchmark project."
 site_author = "RecBench Contributors"
 copyright = "Copyright (c) 2026 RecBench Contributors"
+extra_javascript = [
+  "https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js",
+  "assets/echarts-loader.js",
+]
 nav = [
   "index.md",
   "getting-started.md",

@@ -19,10 +19,10 @@ description: 当前仓库的开发优先级、提交流程与一致性要求
 
 1. `config` 与公共 API
 2. registry 与模型/数据发现
-3. dataset adapter 稳定性
+3. dataset adapter 稳定性（含 dense remap、split_mode）
 4. `PredictionBundle` 与 evaluator 契约
-5. 单实验 pipeline（含训练型路径）
-6. 训练型模型样板（`dssm` 已完成）
+5. 单实验 pipeline（含训练型路径，已通过 hyformer 验证）
+6. 训练型模型样板（hyformer 已完成）
 7. Benchmark 聚合与恢复细化
 8. 再逐步扩展模型覆盖
 
@@ -32,9 +32,9 @@ description: 当前仓库的开发优先级、提交流程与一致性要求
 
 优先级较高的方向包括：
 
-- 扩展第二个训练型模型样板（如 sequence 家族的模型）
+- 扩展更多训练型模型（如 sequence 家族的模型）
 - 统一配置示例与真实代码字段
-- 为 `itemcf`、`hyformer` 和公共契约补充测试
+- 为 `itemcf`、`hyformer` 和公共契约补充更多测试
 - 继续修正文档、脚本与配置中的过时引用
 - 收敛数据适配器与评估层的字段约定
 
@@ -67,9 +67,10 @@ uv run zensical build --strict --clean
 ## 当前特别需要注意的一致性问题
 
 - 包路径应统一围绕 `recsys`，不要残留旧入口
-- 配置中的模型名与数据集名必须真实存在并可注册
+- 配置中的模型名与数据集名必须真实存在并可注册（当前：`itemcf`、`hyformer`；`taac2026_*`、`taac2025_*`、`movielens_1m`、`synthetic`）
 - README、`docs/`、`configs/` 与代码状态必须一致
 - 目录预留不等于功能已实现
+- `dssm` 不再作为训练型模型示例引用，当前训练模型为 `hyformer`
 
 ## PR 建议
 
@@ -100,4 +101,4 @@ uv run zensical build --strict --clean
 
 ## 当前最重要的结论
 
-RecBench 当前最有价值的开发工作，是继续把“已完成的主干”打磨得更稳、更一致，而不是在未接通的运行时主路上快速堆叠更多模型文件。
+RecBench 当前最有价值的开发工作，是继续把"已完成的主干"打磨得更稳、更一致，而不是在未接通的运行时主路上快速堆叠更多模型文件。
