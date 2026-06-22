@@ -53,6 +53,9 @@ class EDAConfig:
     domain_pattern: str = "domain_"
     dense_pattern: str = "user_dense_"
     tail_quantile: float = 0.95
+    cold_start_quantile: float = 0.05
+    rating_col: Optional[str] = None  # auto-detect if None
+    timestamp_col: Optional[str] = None  # auto-detect if None
     top_n_co_missing: int = 10
     output_dir: str = ""  # Empty string = derived by RunContext
     report_path: str = ""  # Empty string = derived by RunContext

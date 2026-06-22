@@ -1,0 +1,62 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "User Activity Distribution"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "0-109",
+        "110-219",
+        "220-329",
+        "330-439",
+        "440-549",
+        "550-659",
+        "660-769",
+        "770-879",
+        "880-989",
+        "990-1099"
+      ],
+      "name": "Interaction Count"
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "Users"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          4601,
+          917,
+          299,
+          136,
+          42,
+          19,
+          4,
+          2,
+          1,
+          1
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "movielens_1m",
+    "dataset_label": "movielens_1m (796,244 rows)",
+    "run_tag": null,
+    "generated_at": "2026-06-22T10:24:24.903933+00:00",
+    "sample_strategy": "none",
+    "total_rows": 500000,
+    "sample_ratio": 1.0,
+    "strat_rows": 500000,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": 6022,
+    "total_items": 3043
+  }
+}

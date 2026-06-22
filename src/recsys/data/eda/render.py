@@ -15,12 +15,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import numpy as np
+
 from recsys.data.eda.sampler import SampleMetadata
 from recsys.data.eda.stats.distribution import DistributionResult
 from recsys.data.eda.stats.effectiveness import EffectivenessResult
 from recsys.data.eda.stats.missing import MissingResult
 from recsys.data.eda.stats.overview import OverviewResult
+from recsys.data.eda.stats.rating import RatingResult
 from recsys.data.eda.stats.sequence import SequenceResult
+from recsys.data.eda.stats.sparsity import SparsityResult
+from recsys.data.eda.stats.temporal import TemporalResult
 from recsys.data.eda.stats.user_item import UserItemResult
 
 logger = logging.getLogger(__name__)
@@ -532,6 +537,185 @@ def _render_vector_dim_variance(
     }
 
 
+def _render_sparsity_gauge(
+    sparsity: SparsityResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Sparsity gauge chart."""
+    if sparsity is None or sparsity.skipped:
+        return None
+    pct = round((1.0 - sparsity.matrix_sparsity) * 100, 1)
+    return {
+        "echarts_option": {
+            "title": {"text": f"Interaction Density: {pct}%"},
+            "series": [{
+                "type": "gauge",
+                "min": 0,
+                "max": 100,
+                "detail": {"formatter": "{value}%"},
+                "data": [{"value": pct, "name": "Density"}],
+            }],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_item_lorenz(
+    sparsity: SparsityResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Lorenz curve for item popularity."""
+    if sparsity is None or sparsity.skipped or not sparsity.item_popularity_sorted:
+        return None
+    values = sparsity.item_popularity_sorted
+    cumsum = np.cumsum(values) / np.sum(values)
+    n = len(cumsum)
+    x_line = np.linspace(0, 100, n).tolist()
+    y_line = (cumsum * 100).tolist()
+    return {
+        "echarts_option": {
+            "title": {"text": f"Item Popularity Lorenz Curve (Gini={sparsity.item_gini})"},
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "value", "name": "Cumulative Items (%)", "min": 0, "max": 100},
+            "yAxis": {"type": "value", "name": "Cumulative Interactions (%)", "min": 0, "max": 100},
+            "series": [
+                {"type": "line", "data": [{"value": [x_line[i], y_line[i]]} for i in range(len(x_line))], "smooth": True, "name": "Lorenz"},
+                {"type": "line", "data": [[0, 0], [100, 100]], "name": "Equality", "lineStyle": {"type": "dashed"}},
+            ],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_monthly_volume(
+    temporal: TemporalResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Monthly interaction volume line chart."""
+    if temporal is None or temporal.skipped or not temporal.monthly_volume:
+        return None
+    items = sorted(temporal.monthly_volume.items())
+    x_data = [k for k, _ in items]
+    y_data = [v for _, v in items]
+    return {
+        "echarts_option": {
+            "title": {"text": "Monthly Interaction Volume"},
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "category", "data": x_data, "axisLabel": {"rotate": 45}},
+            "yAxis": {"type": "value", "name": "Interactions"},
+            "series": [{"type": "line", "data": y_data, "smooth": True}],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_retention_curve(
+    temporal: TemporalResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """User retention curve."""
+    if temporal is None or temporal.skipped or not temporal.retention_curve:
+        return None
+    items = sorted(temporal.retention_curve.items())
+    x_data = [k for k, _ in items]
+    y_data = [round(v * 100, 1) for _, v in items]
+    return {
+        "echarts_option": {
+            "title": {"text": "User Retention Curve"},
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "value", "name": "Days Since First Interaction"},
+            "yAxis": {"type": "value", "name": "Retention (%)", "min": 0, "max": 100},
+            "series": [{"type": "line", "data": [{"value": [x_data[i], y_data[i]]} for i in range(len(x_data))], "smooth": True}],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_rating_distribution(
+    rating: RatingResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Rating distribution bar chart."""
+    if rating is None or rating.skipped or not rating.rating_distribution:
+        return None
+    items = sorted(rating.rating_distribution.items())
+    x_data = [str(k) for k, _ in items]
+    y_data = [round(v * 100, 1) for _, v in items]
+    return {
+        "echarts_option": {
+            "title": {"text": f"Rating Distribution (mean={rating.global_mean:.2f})"},
+            "tooltip": {"trigger": "axis", "formatter": "{b}: {c}%"},
+            "xAxis": {"type": "category", "data": x_data, "name": "Rating"},
+            "yAxis": {"type": "value", "name": "Percentage (%)"},
+            "series": [{"type": "bar", "data": y_data}],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_user_rating_bias(
+    rating: RatingResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """User rating bias horizontal bar chart."""
+    if rating is None or rating.skipped:
+        return None
+    top_cats = [f"U{uid}" for uid, _ in rating.user_bias_top]
+    top_vals = [round(b, 4) for _, b in rating.user_bias_top]
+    bottom_cats = [f"U{uid}" for uid, _ in rating.user_bias_bottom]
+    bottom_vals = [round(b, 4) for _, b in rating.user_bias_bottom]
+    return {
+        "echarts_option": {
+            "title": {"text": "User Rating Bias (Top-10 Most Generous & Critical)"},
+            "tooltip": {"trigger": "axis"},
+            "legend": {"data": ["Generous (most positive bias)", "Critical (most negative bias)"]},
+            "yAxis": {"type": "category", "data": list(reversed(top_cats + bottom_cats))},
+            "xAxis": {"type": "value", "name": "Bias from Global Mean"},
+            "series": [
+                {"type": "bar", "name": "Generous (most positive bias)", "data": list(reversed(top_vals + [None] * len(bottom_vals)))},
+                {"type": "bar", "name": "Critical (most negative bias)", "data": [None] * len(top_vals) + list(reversed(bottom_vals))},
+            ],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_user_activity_hist(
+    user_item: UserItemResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """User activity histogram."""
+    if user_item is None or user_item.skipped or not user_item.user_activity_histogram:
+        return None
+    items = sorted(user_item.user_activity_histogram.items(), key=lambda x: int(x[0].split("-")[0]))
+    x_data = [k for k, _ in items]
+    y_data = [v for _, v in items]
+    return {
+        "echarts_option": {
+            "title": {"text": "User Activity Distribution"},
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "category", "data": x_data, "name": "Interaction Count"},
+            "yAxis": {"type": "value", "name": "Users"},
+            "series": [{"type": "bar", "data": y_data}],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
+def _render_item_popularity_hist(
+    user_item: UserItemResult, metadata: SampleMetadata, **kwargs: Any
+) -> Optional[Dict[str, Any]]:
+    """Item popularity histogram."""
+    if user_item is None or user_item.skipped or not user_item.item_popularity_histogram:
+        return None
+    items = sorted(user_item.item_popularity_histogram.items(), key=lambda x: int(x[0].split("-")[0]))
+    x_data = [k for k, _ in items]
+    y_data = [v for _, v in items]
+    return {
+        "echarts_option": {
+            "title": {"text": "Item Popularity Distribution"},
+            "tooltip": {"trigger": "axis"},
+            "xAxis": {"type": "category", "data": x_data, "name": "Interaction Count"},
+            "yAxis": {"type": "value", "name": "Items"},
+            "series": [{"type": "bar", "data": y_data}],
+        },
+        "_eda_metadata": _make_metadata(kwargs.get("ctx"), metadata),
+    }
+
+
 # Chart name → renderer function
 _CHART_REGISTRY: Dict[str, Any] = {
     "column_layout": _render_column_layout,
@@ -552,6 +736,14 @@ _CHART_REGISTRY: Dict[str, Any] = {
     "cross_domain_overlap": _render_cross_domain_overlap,
     "vector_norms": _render_vector_norms,
     "vector_dim_variance": _render_vector_dim_variance,
+    "sparsity_gauge": _render_sparsity_gauge,
+    "item_lorenz_curve": _render_item_lorenz,
+    "monthly_volume": _render_monthly_volume,
+    "retention_curve": _render_retention_curve,
+    "rating_distribution": _render_rating_distribution,
+    "user_rating_bias": _render_user_rating_bias,
+    "user_activity_histogram": _render_user_activity_hist,
+    "item_popularity_histogram": _render_item_popularity_hist,
 }
 
 
@@ -562,8 +754,11 @@ def render_to_echarts(
     sequence: SequenceResult,
     effectiveness: EffectivenessResult,
     user_item: UserItemResult,
-    metadata: SampleMetadata,
-    output_dir: Path,
+    sparsity: Optional[SparsityResult] = None,
+    temporal: Optional[TemporalResult] = None,
+    rating: Optional[RatingResult] = None,
+    metadata: SampleMetadata = None,  # noqa: RUF013
+    output_dir: Path = None,  # noqa: RUF013
     ctx: Any = None,
     **kwargs: Any,
 ) -> RenderOutput:
@@ -599,6 +794,9 @@ def render_to_echarts(
             sequence=sequence,
             effectiveness=effectiveness,
             user_item=user_item,
+            sparsity=sparsity,
+            temporal=temporal,
+            rating=rating,
             metadata=metadata,
             ctx=ctx,
             **kwargs,

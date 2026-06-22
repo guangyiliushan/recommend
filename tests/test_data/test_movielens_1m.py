@@ -55,9 +55,9 @@ def test_movielens_load_raw(tmp_path: Path):
     assert raw["train"][0] == [10, 20, 30, 40]
 
 
-def test_movielens_prepare_splits():
+def test_movielens_prepare_splits(tmp_path: Path):
     """验证 _prepare_splits 产出正确的 SequenceSplit。"""
-    ds = Movielens1MDataset(root_dir="./data", min_seq_len=2, max_seq_len=50)
+    ds = Movielens1MDataset(root_dir=str(tmp_path), min_seq_len=2, max_seq_len=50)
     raw = _make_mock_raw()
 
     train, val, test = ds._prepare_splits(raw)
@@ -78,9 +78,9 @@ def test_movielens_prepare_splits():
     assert "candidate_items" in sample
 
 
-def test_movielens_metadata():
+def test_movielens_metadata(tmp_path: Path):
     """验证 num_users / num_items 元数据。"""
-    ds = Movielens1MDataset(root_dir="./data", min_seq_len=2)
+    ds = Movielens1MDataset(root_dir=str(tmp_path), min_seq_len=2)
     raw = _make_mock_raw()
 
     ds._prepare_splits(raw)
@@ -89,11 +89,11 @@ def test_movielens_metadata():
     assert ds.num_items == 8  # 物品 10,20,30,40,50,60,70,80
 
 
-def test_movielens_itemcf_fit_predict():
+def test_movielens_itemcf_fit_predict(tmp_path: Path):
     """端到端：加载 mock 数据 → ItemCF fit → predict。"""
     from recsys.models.classical.item_based_cf import ItemBasedCF
 
-    ds = Movielens1MDataset(root_dir="./data", min_seq_len=2, max_seq_len=50)
+    ds = Movielens1MDataset(root_dir=str(tmp_path), min_seq_len=2, max_seq_len=50)
     raw = _make_mock_raw()
     train_split, _, test_split = ds._prepare_splits(raw)
 
@@ -136,9 +136,9 @@ def test_sequence_split_basic():
     assert len(result) == 4
 
 
-def test_movielens_empty_seq_filtered():
+def test_movielens_empty_seq_filtered(tmp_path: Path):
     """min_seq_len 过滤后无用户的边界情况。"""
-    ds = Movielens1MDataset(root_dir="./data", min_seq_len=100)
+    ds = Movielens1MDataset(root_dir=str(tmp_path), min_seq_len=100)
     raw = {
         "train": [[1, 2]],
         "val": [[3]],

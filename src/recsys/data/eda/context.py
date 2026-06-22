@@ -44,10 +44,6 @@ class RunContext:
         Resolved path for structured stats JSON.
     assets_dir_rel : str
         Relative path from report directory to charts directory.
-    subset : Optional[str]
-        Subset name for multi-subset datasets (e.g. "seq", "user_feat").
-    profile : Optional[str]
-        Analysis profile (e.g. "behavior", "vector").
     """
 
     dataset_id: str
@@ -63,36 +59,6 @@ class RunContext:
     assets_dir_rel: str
     load_sampled: bool = False
     load_original_rows: int = 0
-    subset: Optional[str] = None
-    profile: Optional[str] = None
-
-    def _apply_subset_paths(self) -> None:
-        """Re-derive output paths when subset is set after construction.
-
-        Call after setting ctx.subset on an existing RunContext.
-        For multi-subset datasets, inserts {subset}/ into paths.
-        """
-        if not self.subset:
-            return
-
-        # Only restructure if the base path doesn't already contain the subset
-        base_output = Path(f"docs/assets/figures/eda/{self.dataset_id}")
-        base_report = Path(f"docs/analysis/dataset-eda/{self.dataset_id}")
-
-        # Insert subset directory
-        self.output_dir = base_output / self.subset
-        self.report_path = base_report / self.subset / "report.md"
-        self.json_path = base_report / self.subset / "summary.json"
-
-        if self.run_tag:
-            self.output_dir = self.output_dir / self.run_tag
-            self.report_path = self.report_path.parent / self.run_tag / self.report_path.name
-            self.json_path = self.json_path.parent / self.run_tag / self.json_path.name
-
-        # Recompute relative path
-        import os
-        report_parent = self.report_path.parent
-        self.assets_dir_rel = os.path.relpath(self.output_dir, report_parent).replace("\\", "/")
 
     @classmethod
     def from_args(

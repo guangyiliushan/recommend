@@ -1,0 +1,38 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Interaction Density: 2.7%"
+    },
+    "series": [
+      {
+        "type": "gauge",
+        "min": 0,
+        "max": 100,
+        "detail": {
+          "formatter": "{value}%"
+        },
+        "data": [
+          {
+            "value": 2.7,
+            "name": "Density"
+          }
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "movielens_1m",
+    "dataset_label": "movielens_1m",
+    "run_tag": null,
+    "generated_at": "2026-06-22T08:09:44.737362+00:00",
+    "sample_strategy": "pending",
+    "total_rows": 796244,
+    "sample_ratio": 1.0,
+    "strat_rows": 0,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": null,
+    "total_items": null
+  }
+}

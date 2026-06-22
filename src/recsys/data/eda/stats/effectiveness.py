@@ -86,14 +86,10 @@ def analyze(
 
     for col in candidate_cols:
         # Try to convert to numeric
-        try:
-            x = pd.to_numeric(df[col], errors="coerce").values
-        except (ValueError, TypeError):
-            skipped_features[col] = "Cannot convert to numeric"
-            continue
+        x = pd.to_numeric(df[col], errors="coerce").values
 
         # Handle NaN: use median imputation for simplicity
-        nan_mask = np.isnan(x)
+        nan_mask = pd.isna(x)
         if nan_mask.all():
             skipped_features[col] = "All values are NaN"
             continue

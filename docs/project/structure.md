@@ -105,15 +105,15 @@ docs/
 
 承载所有 CLI 实验入口与工具脚本。当前共七个脚本：
 
-| 脚本 | 用途 | 关键能力 |
-|:---|:---|:---|
-| `run.py` | Hydra 主入口 | YAML 组合 + CLI 覆盖，六子树桥接为 Pipeline 配置 |
-| `run_single.py` | 单实验 argparse 入口 | 双模式（argparse + Hydra），支持 `--split-mode` 和 `--min-action-type` |
-| `run_benchmark.py` | 批量 Benchmark | 三种运行模式、四种恢复策略、受控并发 |
-| `run_ablation.py` | 消融实验矩阵 | 预置 ItemCF 四组参数空间，输出 CSV 对比表 |
-| `download_data.py` | HuggingFace 数据下载 | 维护注册名到仓库 ID 映射，本地缓存 |
-| `benchmark_data_pipeline.py` | 数据管线性能基准 | 格式×压缩×后端全矩阵读写性能测量 |
-| `generate_report.py` | 报告生成 | 从 summary.csv 生成 Markdown 性能对比报告 |
+| 脚本                         | 用途                 | 关键能力                                                               |
+| :--------------------------- | :------------------- | :--------------------------------------------------------------------- |
+| `run.py`                     | Hydra 主入口         | YAML 组合 + CLI 覆盖，六子树桥接为 Pipeline 配置                       |
+| `run_single.py`              | 单实验 argparse 入口 | 双模式（argparse + Hydra），支持 `--split-mode` 和 `--min-action-type` |
+| `run_benchmark.py`           | 批量 Benchmark       | 三种运行模式、四种恢复策略、受控并发                                   |
+| `run_ablation.py`            | 消融实验矩阵         | 预置 ItemCF 四组参数空间，输出 CSV 对比表                              |
+| `download_data.py`           | HuggingFace 数据下载 | 维护注册名到仓库 ID 映射，本地缓存                                     |
+| `benchmark_data_pipeline.py` | 数据管线性能基准     | 格式×压缩×后端全矩阵读写性能测量                                       |
+| `generate_report.py`         | 报告生成             | 从 summary.csv 生成 Markdown 性能对比报告                              |
 
 `train_hyformer.py` 是独立的模型结构调试脚本，使用随机内存数据直接训练，不走数据集适配器和 Pipeline。生产环境的训练应使用 `run_single.py` 或 `run.py`。
 
@@ -273,15 +273,15 @@ src/recsys/
 
 具体落点规则：
 
-| 新增内容 | 代码落点 | 文档落点 |
-|:---|:---|:---|
-| 新数据集适配器 | `src/recsys/data/datasets/{name}.py` | `docs/project/datasets.md` |
-| 新数据集配置 | `configs/dataset/{name}.yaml` | `docs/project/datasets.md` |
-| 新模型 | `src/recsys/models/{family}/{name}.py` | `docs/project/models.md` |
-| 新模型配置 | `configs/model/{family}/{name}.yaml` | `docs/project/models.md` |
-| 新实验套件 | `configs/experiment/{name}.yaml` | `docs/experiments/{name}.md` |
-| 新运行时工具 | `src/recsys/utils/` 或 `src/recsys/training/` | `docs/guides/` 或 `docs/operations/` |
-| 新 EDA 分析维度 | `src/recsys/data/eda/stats/{name}.py` | `docs/analysis/` |
+| 新增内容        | 代码落点                                      | 文档落点                             |
+| :-------------- | :-------------------------------------------- | :----------------------------------- |
+| 新数据集适配器  | `src/recsys/data/datasets/{name}.py`          | `docs/project/datasets.md`           |
+| 新数据集配置    | `configs/dataset/{name}.yaml`                 | `docs/project/datasets.md`           |
+| 新模型          | `src/recsys/models/{family}/{name}.py`        | `docs/project/models.md`             |
+| 新模型配置      | `configs/model/{family}/{name}.yaml`          | `docs/project/models.md`             |
+| 新实验套件      | `configs/experiment/{name}.yaml`              | `docs/experiments/{name}.md`         |
+| 新运行时工具    | `src/recsys/utils/` 或 `src/recsys/training/` | `docs/guides/` 或 `docs/operations/` |
+| 新 EDA 分析维度 | `src/recsys/data/eda/stats/{name}.py`         | `docs/analysis/`                     |
 
 ## 需要避免的反模式
 

@@ -1,7 +1,7 @@
 # 数据集 EDA 报告
 
 > **数据集**：taac2026_data_sample (1,000 rows)
-> **生成时间**：2026-06-17T13:44:21.005475+00:00
+> **生成时间**：2026-06-22T10:56:41.277550+00:00
 > **数据来源**：registry:taac2026_data_sample
 > **图表目录**：[../../../assets/figures/eda/taac2026_data_sample](../../../assets/figures/eda/taac2026_data_sample)
 
@@ -12,6 +12,9 @@
 - **内存占用**：7.7 MB
 - **含标签列**：是
 - **含时间戳**：是
+- **反馈类型**：implicit_binary
+- **序列类型**：domain_seq
+- **模态**：multimodal
 
 - **列分组**：core(5), domain_seq(45), item_feat(14), user_feat(56)
 
@@ -29,14 +32,14 @@
 
 **列分组分布**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/column_layout.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/column_layout.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 ## 3. 行为类型分布
 
 **Label 类型分布**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/label_distribution.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/label_distribution.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 - `label_type=1`：87.6%
@@ -46,7 +49,7 @@
 
 **各特征缺失率**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/null_rates.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/null_rates.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 - **整体缺失率**：14.99%
@@ -61,12 +64,12 @@
 
 **特征基数**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/cardinality.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/cardinality.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 **基数区间分布**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/cardinality_bins.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/cardinality_bins.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 - **基数区间**：1-10: 30, 11-100: 12, 101-1K: 78
@@ -75,19 +78,19 @@
 
 **特征覆盖率热力图**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/coverage_heatmap.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/coverage_heatmap.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 ## 7. 序列长度分布
 
 **域序列长度**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/sequence_lengths.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/sequence_lengths.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 **序列长度汇总**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/seq_length_summary.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/seq_length_summary.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 - **domain_a_seq_38**：均值 701，P95=1673，空序列率 0.5%
@@ -140,7 +143,7 @@
 
 **用户活跃度**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/user_activity.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/user_activity.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 - **用户数**：1,000
@@ -154,14 +157,24 @@
 
 **跨域用户重叠**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/cross_domain_overlap.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/cross_domain_overlap.echarts.json" style="width:100%;min-height:400px;"></div>
+
+
+**用户活跃度分布**
+
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/user_activity_histogram.echarts.json" style="width:100%;min-height:400px;"></div>
+
+
+**物品流行度分布**
+
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/item_popularity_histogram.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 ## 9. 特征有效性（单特征 AUC）
 
 **单特征 AUC**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/feature_auc.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/feature_auc.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 - **AUC Top-5 特征**：
@@ -177,19 +190,19 @@
 
 **共缺失特征对**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/co_missing.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/co_missing.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 **按标签分组缺失率**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/null_rate_by_label.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/null_rate_by_label.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 ### 正负样本缺失率对比
 
 **跨标签缺失率差异**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/label_null_diff.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/label_null_diff.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 以下特征在正负样本间的缺失率差距最大（|Δ| > 5%），可能存在**标签条件缺失机制 (MNAR)**：
@@ -206,14 +219,14 @@
 
 **稠密特征分布**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/dense_distributions.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/dense_distributions.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 ## 12. 序列行为模式
 
 **序列内物品重复率**
 
-<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/seq_repeat_rate.echarts.json"></div>
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/seq_repeat_rate.echarts.json" style="width:100%;min-height:400px;"></div>
 
 
 - **domain_a_seq_38** 重复率：95.50%
@@ -261,6 +274,47 @@
 - **domain_d_seq_24** 重复率：96.99%
 - **domain_d_seq_25** 重复率：97.33%
 - **domain_d_seq_26** 重复率：41.14%
+
+## 13. 稀疏度与冷启动分析
+
+**交互密度**
+
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/sparsity_gauge.echarts.json" style="width:100%;min-height:400px;"></div>
+
+
+- **矩阵稀疏度**：99.8805%
+- **交互密度**：0.12%
+- **物品**：837 个，平均曝光 1.2 次
+- **物品流行度 Gini 系数**：0.1530（0=均匀，1=极度集中）
+- **冷启动用户占比**：100.0%（交互数 < P5 阈值）
+- **冷启动物品占比**：90.1%（交互数 < P5 阈值）
+- **用户交互集中度**：
+  - top1pct：1.0%
+  - top5pct：5.0%
+  - top10pct：10.0%
+- **长尾覆盖**：41.8%（后 50% 物品贡献的交互占比）
+**物品流行度洛伦兹曲线**
+
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/item_lorenz_curve.echarts.json" style="width:100%;min-height:400px;"></div>
+
+
+
+## 14. 时序行为分析
+
+- **时间跨度**：2026-03-05 15:36:40 ～ 2026-03-05 15:49:41（0 天）
+- **日均交互**：1000.0
+- **峰值日交互**：1,000
+**月度交互量趋势**
+
+<div class="echarts" data-src="../../../assets/figures/eda/taac2026_data_sample/monthly_volume.echarts.json" style="width:100%;min-height:400px;"></div>
+
+
+
+## 15. 评分分析
+
+> !!! warning "分析跳过"
+> 章节「评分分析」当前数据集不支持此分析 (reason: No rating column found (looked for: rating, Rating, score, stars).)。
+
 
 ---
 

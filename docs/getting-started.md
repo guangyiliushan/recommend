@@ -21,15 +21,15 @@ uv sync --extra dev
 
 RecBench 提供七条 CLI 入口，覆盖从数据准备到性能对比的完整场景：
 
-| 脚本 | 用途 | 典型场景 |
-|:---|:---|:---|
-| `scripts/run.py` | Hydra 主入口，通过 YAML 组合配置运行单次实验 | 日常开发、参数组合探索 |
-| `scripts/run_single.py` | 命令行直参模式运行单次实验 | 快速验证、无 Hydra 依赖的 CI 环境 |
-| `scripts/run_benchmark.py` | 批量 Benchmark，支持矩阵展开与配置文件 | 多模型×多数据集×多 seed 全面对比 |
-| `scripts/run_ablation.py` | 消融实验矩阵执行器 | 单超参数变体对比分析 |
-| `scripts/download_data.py` | 通过 HuggingFace 下载 TAAC 数据集 | 首次使用前的数据准备 |
-| `scripts/benchmark_data_pipeline.py` | 数据管线性能基准测试 | 对比存储格式、压缩算法与计算后端 |
-| `scripts/generate_report.py` | 从 Benchmark 的 summary.csv 生成 Markdown 对比报告 | 实验完成后生成可读报告 |
+| 脚本                                 | 用途                                               | 典型场景                          |
+| :----------------------------------- | :------------------------------------------------- | :-------------------------------- |
+| `scripts/run.py`                     | Hydra 主入口，通过 YAML 组合配置运行单次实验       | 日常开发、参数组合探索            |
+| `scripts/run_single.py`              | 命令行直参模式运行单次实验                         | 快速验证、无 Hydra 依赖的 CI 环境 |
+| `scripts/run_benchmark.py`           | 批量 Benchmark，支持矩阵展开与配置文件             | 多模型×多数据集×多 seed 全面对比  |
+| `scripts/run_ablation.py`            | 消融实验矩阵执行器                                 | 单超参数变体对比分析              |
+| `scripts/download_data.py`           | 通过 HuggingFace 下载 TAAC 数据集                  | 首次使用前的数据准备              |
+| `scripts/benchmark_data_pipeline.py` | 数据管线性能基准测试                               | 对比存储格式、压缩算法与计算后端  |
+| `scripts/generate_report.py`         | 从 Benchmark 的 summary.csv 生成 Markdown 对比报告 | 实验完成后生成可读报告            |
 
 ### run.py — Hydra 主入口
 
@@ -161,14 +161,14 @@ uv run zensical build --strict --clean
 
 ## 仓库重要目录
 
-| 目录 | 说明 |
-|:---|:---|
-| `src/recsys` | 核心源码（core/pipeline/evaluation/training/data/utils） |
-| `configs` | Hydra 配置树（主配置、数据集子树、实验矩阵、模型子树） |
-| `docs` | MkDocs 文档站源码（concepts/project/experiments） |
-| `tests` | 测试用例 |
-| `outputs` | 实验与 Benchmark 结果输出目录 |
-| `.github/workflows` | CI/CD 自动化工作流 |
+| 目录                | 说明                                                     |
+| :------------------ | :------------------------------------------------------- |
+| `src/recsys`        | 核心源码（core/pipeline/evaluation/training/data/utils） |
+| `configs`           | Hydra 配置树（主配置、数据集子树、实验矩阵、模型子树）   |
+| `docs`              | MkDocs 文档站源码（concepts/project/experiments）        |
+| `tests`             | 测试用例                                                 |
+| `outputs`           | 实验与 Benchmark 结果输出目录                            |
+| `.github/workflows` | CI/CD 自动化工作流                                       |
 
 ## 当前需要特别注意的现实边界
 

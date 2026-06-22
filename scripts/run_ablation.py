@@ -14,13 +14,14 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+# 触发数据集注册副作用（导入各 dataset adapter 以执行 @DATASET_REGISTRY.register()）
+import recsys.data.dataset_registry  # noqa: F401
 from recsys import auto_discover_models
 from recsys.core.registry import DATASET_REGISTRY, MODEL_REGISTRY
 from recsys.pipeline.experiment import ExperimentConfig, run_experiment
@@ -131,7 +132,7 @@ def main() -> None:
             seed=args.seed,
             output_dir=str(Path(args.output) / "experiments"),
             data_config={"root_dir": args.data_root},
-            model_config={"params": OrderedDict([(param_name, typed_value)])},
+            model_config={"params": {param_name: typed_value}},
             evaluation_config={
                 "metrics": args.metrics,
                 "ranking_k": [10],

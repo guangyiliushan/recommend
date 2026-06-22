@@ -17,6 +17,9 @@
     "has_label": false,
     "has_timestamp": false,
     "suspected_multimodal_embeddings": [],
+    "feedback_type": "unknown",
+    "sequence_type": "nested_seq",
+    "modality": "single",
     "skipped": false,
     "skip_reason": null
   },
@@ -55,11 +58,27 @@
     "skip_reason": null
   },
   "sequence": {
-    "domain_lengths": {},
-    "seq_repeat_rates": {},
-    "has_sequences": false,
-    "skipped": true,
-    "skip_reason": "No columns found matching pattern 'domain_'."
+    "domain_lengths": {
+      "seq": {
+        "mean": 90.05,
+        "std": 13.34,
+        "min": 10.0,
+        "max": 100.0,
+        "p50": 95.0,
+        "p95": 100.0,
+        "p99": 100.0,
+        "empty_rate": 0.0
+      }
+    },
+    "seq_repeat_rates": {
+      "seq": 0.0023
+    },
+    "has_sequences": true,
+    "sequence_coverage": {
+      "seq": 3509119
+    },
+    "skipped": false,
+    "skip_reason": null
   },
   "effectiveness": {
     "feature_auc": {},
@@ -79,8 +98,49 @@
     },
     "item_popularity": {},
     "cross_domain_overlap": null,
+    "item_popularity_sorted": null,
+    "user_activity_histogram": {
+      "0-0": 500000
+    },
+    "item_popularity_histogram": null,
     "skipped": false,
     "skip_reason": null
+  },
+  "sparsity": {
+    "matrix_sparsity": 0.0,
+    "user_interaction_stats": {},
+    "item_popularity_stats": {},
+    "item_gini": 0.0,
+    "cold_start_user_ratio": 0.0,
+    "cold_start_item_ratio": 0.0,
+    "user_concentration": {},
+    "long_tail_coverage": 0.0,
+    "item_popularity_sorted": null,
+    "skipped": true,
+    "skip_reason": "Required columns not found: item_id."
+  },
+  "temporal": {
+    "time_span": {},
+    "monthly_volume": {},
+    "retention_curve": null,
+    "interaction_gap_stats": null,
+    "daily_avg_interactions": 0.0,
+    "peak_day_interactions": 0,
+    "skipped": true,
+    "skip_reason": "No timestamp column found (looked for: timestamp, time, created_at)."
+  },
+  "rating": {
+    "rating_distribution": {},
+    "user_avg_rating_stats": {},
+    "item_avg_rating_stats": {},
+    "global_mean": 0.0,
+    "user_bias_top": [],
+    "user_bias_bottom": [],
+    "item_bias_top": [],
+    "item_bias_bottom": [],
+    "rating_density": {},
+    "skipped": true,
+    "skip_reason": "No rating column found (looked for: rating, Rating, score, stars)."
   },
   "sample_metadata": {
     "sample_strategy": "none",

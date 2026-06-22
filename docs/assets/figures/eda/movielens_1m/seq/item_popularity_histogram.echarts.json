@@ -1,0 +1,62 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Item Popularity Distribution"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "0-171",
+        "172-343",
+        "344-515",
+        "516-687",
+        "688-859",
+        "860-1031",
+        "1032-1203",
+        "1204-1375",
+        "1376-1547",
+        "1548-1719"
+      ],
+      "name": "Interaction Count"
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "Items"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          2102,
+          530,
+          212,
+          110,
+          43,
+          16,
+          15,
+          11,
+          3,
+          1
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "movielens_1m",
+    "dataset_label": "movielens_1m",
+    "run_tag": null,
+    "generated_at": "2026-06-22T08:09:44.737362+00:00",
+    "sample_strategy": "pending",
+    "total_rows": 796244,
+    "sample_ratio": 1.0,
+    "strat_rows": 0,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": null,
+    "total_items": null
+  }
+}

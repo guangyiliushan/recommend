@@ -25,6 +25,9 @@ class OverviewResult:
     has_label: bool
     has_timestamp: bool
     suspected_multimodal_embeddings: List[str]  # cols with high cardinality + high missing — likely multi-modal embedding lookup keys
+    feedback_type: str = "unknown"  # "explicit" / "implicit_binary" / "implicit"
+    sequence_type: str = "unknown"  # "domain_seq" / "nested_seq" / "none"
+    modality: str = "unknown"  # "multimodal" / "single"
     skipped: bool = False
     skip_reason: Optional[str] = None
 
@@ -104,6 +107,30 @@ def analyze(
     has_label = label_col in df.columns
     has_timestamp = "timestamp" in df.columns
 
+    # ---- dataset type auto-detection ----
+    # Feedback type
+    _rating_candidates = ["rating", "Rating", "score", "stars"]
+    if any(c in df.columns for c in _rating_candidates):
+        feedback_type = "explicit"
+    elif has_label:
+        feedback_type = "implicit_binary"
+    elif "user_id" in df.columns and "item_id" in df.columns:
+        feedback_type = "implicit"
+    else:
+        feedback_type = "unknown"
+
+    # Sequence type
+    if any(c.startswith("domain_") for c in df.columns):
+        sequence_type = "domain_seq"
+    elif "seq" in df.columns:
+        sequence_type = "nested_seq"
+    elif any(c.startswith("history_") for c in df.columns):
+        sequence_type = "history_seq"
+    else:
+        sequence_type = "none"
+
+    # Modality — detected after suspected_multimodal_embeddings check below
+
     # ---- suspected multi-modal embedding lookups ----
     # Heuristic: item/user integer features with very high missing rate (>80%)
     # and non-trivial cardinality (>10) may be cross-modal embedding IDs
@@ -121,6 +148,12 @@ def analyze(
                 card = int(df[col].dropna().apply(tuple).nunique())
             if card > 10:
                 suspected_multimodal_embeddings.append(col)
+
+    # Finalize modality
+    if suspected_multimodal_embeddings or any(c.startswith("mm_emb_") for c in df.columns):
+        modality_val = "multimodal"
+    else:
+        modality_val = "single"
 
     logger.info(
         "Overview: %d rows, %d cols, %d user feat, %d item feat, %d domain seq, "
@@ -144,4 +177,7 @@ def analyze(
         has_label=has_label,
         has_timestamp=has_timestamp,
         suspected_multimodal_embeddings=suspected_multimodal_embeddings,
+        feedback_type=feedback_type,
+        sequence_type=sequence_type,
+        modality=modality_val,
     )

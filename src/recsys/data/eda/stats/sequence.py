@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -19,8 +20,18 @@ class SequenceResult:
     domain_lengths: Dict[str, Dict[str, float]]  # domain_name → {mean, p50, p95, empty_rate, ...}
     seq_repeat_rates: Dict[str, float]  # domain_name → repeat_rate
     has_sequences: bool  # True if domain_* columns were found
+    sequence_coverage: Dict[str, int] = field(default_factory=dict)  # per-column distinct item count
     skipped: bool = False
     skip_reason: Optional[str] = None
+
+
+def _normalize_sequence_item(item):
+    """Normalize nested sequence elements to hashable item identifiers."""
+    if isinstance(item, dict):
+        if "item_id" in item:
+            return item["item_id"]
+        return str(sorted(item.items()))
+    return item
 
 
 def _compute_length_stats(lengths: np.ndarray, total_rows: int) -> Dict[str, float]:
@@ -75,7 +86,7 @@ def _compute_repeat_rate(series: pd.Series) -> float:
     count = 0
     for val in series.dropna():
         if isinstance(val, (list, np.ndarray)):
-            seq = list(val)
+            seq = [_normalize_sequence_item(item) for item in val]
             if len(seq) > 0:
                 unique_count = len(set(seq))
                 total_repeat += 1.0 - (unique_count / len(seq))
@@ -104,7 +115,9 @@ def _try_parse_sequence_value(val) -> Optional[List]:
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return None
     if isinstance(val, (list, np.ndarray)):
-        return list(val)
+        return [_normalize_sequence_item(item) for item in val]
+    if isinstance(val, Iterable) and not isinstance(val, (str, bytes, dict)):
+        return [_normalize_sequence_item(item) for item in val]
     if isinstance(val, str):
         stripped = val.strip("[]")
         if not stripped:
@@ -145,8 +158,17 @@ def analyze(
             skip_reason="DataFrame is empty.",
         )
 
-    # Detect domain sequence columns
-    seq_cols = [c for c in df.columns if c.startswith(domain_pattern)]
+    # Detect domain sequence columns using multiple patterns
+    # Include domain_pattern parameter as first pattern
+    _seq_patterns = [domain_pattern, "seq", "history_", "item_ids"]
+    # Remove duplicates while preserving order
+    _seq_patterns = list(dict.fromkeys(_seq_patterns))
+    seq_cols: List[str] = []
+    for c in df.columns:
+        for pat in _seq_patterns:
+            if c.startswith(pat) or c == pat:
+                seq_cols.append(c)
+                break
 
     if not seq_cols:
         return SequenceResult(
@@ -175,8 +197,17 @@ def analyze(
 
     # ---- intra-sequence repeat rates ----
     seq_repeat_rates: Dict[str, float] = {}
+    sequence_coverage: Dict[str, int] = {}
     for col in seq_cols:
         seq_repeat_rates[col] = _compute_repeat_rate(df[col])
+
+        # Compute distinct items per sequence column
+        all_items: set = set()
+        for val in df[col].dropna():
+            parsed = _try_parse_sequence_value(val)
+            if parsed:
+                all_items.update(parsed)
+        sequence_coverage[col] = len(all_items)
 
     logger.info(
         "Sequence analysis: %d domain cols found, %d with length stats.",
@@ -188,4 +219,5 @@ def analyze(
         domain_lengths=domain_lengths,
         seq_repeat_rates=seq_repeat_rates,
         has_sequences=True,
+        sequence_coverage=sequence_coverage,
     )

@@ -1,0 +1,84 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Sequence Length Summary"
+    },
+    "tooltip": {},
+    "legend": {
+      "data": [
+        "seq"
+      ]
+    },
+    "radar": {
+      "indicator": [
+        {
+          "name": "mean",
+          "max": 1.0
+        },
+        {
+          "name": "std",
+          "max": 1.0
+        },
+        {
+          "name": "min",
+          "max": 1.0
+        },
+        {
+          "name": "max",
+          "max": 1.0
+        },
+        {
+          "name": "p50",
+          "max": 1.0
+        },
+        {
+          "name": "p95",
+          "max": 1.0
+        },
+        {
+          "name": "p99",
+          "max": 1.0
+        },
+        {
+          "name": "empty_rate",
+          "max": 1.0
+        }
+      ]
+    },
+    "series": [
+      {
+        "type": "radar",
+        "data": [
+          {
+            "name": "seq",
+            "value": [
+              90.06,
+              13.32,
+              10.0,
+              100.0,
+              95.0,
+              100.0,
+              100.0,
+              0.0
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2025_1m",
+    "dataset_label": "taac2025_1M",
+    "run_tag": null,
+    "generated_at": "2026-06-22T09:30:38.558163+00:00",
+    "sample_strategy": "pending",
+    "total_rows": 1001845,
+    "sample_ratio": 1.0,
+    "strat_rows": 0,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": null,
+    "total_items": null
+  }
+}

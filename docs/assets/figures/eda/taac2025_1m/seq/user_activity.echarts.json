@@ -1,0 +1,51 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "User Activity Distribution"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "mean",
+        "p50",
+        "p75",
+        "p95",
+        "p99"
+      ]
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "Interactions"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          1.0,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2025_1m",
+    "dataset_label": "taac2025_1M",
+    "run_tag": null,
+    "generated_at": "2026-06-22T09:30:38.558163+00:00",
+    "sample_strategy": "pending",
+    "total_rows": 1001845,
+    "sample_ratio": 1.0,
+    "strat_rows": 0,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": null,
+    "total_items": null
+  }
+}

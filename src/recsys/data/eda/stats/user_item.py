@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -19,11 +19,14 @@ class UserItemResult:
     user_activity: Dict[str, float]  # {mean, p50, p75, p95, p99, max, total_users}
     item_popularity: Dict[str, float]  # {mean, p50, p95, p99, max, total_items}
     cross_domain_overlap: Optional[Dict[str, float]]  # domain pair → overlap ratio
+    item_popularity_sorted: Optional[List[float]] = None  # sorted counts for Lorenz curve
+    user_activity_histogram: Optional[Dict[str, int]] = None  # 10-bin histogram
+    item_popularity_histogram: Optional[Dict[str, int]] = None  # 10-bin histogram
     skipped: bool = False
     skip_reason: Optional[str] = None
 
 
-def _activity_stats(counts: np.ndarray) -> Dict[str, float]:
+def activity_stats(counts: np.ndarray) -> Dict[str, float]:
     """Compute summary statistics for user/item counts."""
     if len(counts) == 0:
         return {
@@ -42,6 +45,21 @@ def _activity_stats(counts: np.ndarray) -> Dict[str, float]:
         "p99": round(float(np.percentile(counts, 99)), 2),
         "max": float(counts.max()),
     }
+
+
+def _compute_histogram(counts: np.ndarray, bins: int = 10) -> Dict[str, int]:
+    """Compute equal-width histogram bins."""
+    if len(counts) == 0 or counts.max() == 0:
+        return {}
+    bin_width = max(1, int(np.ceil(counts.max() / bins)))
+    edges = np.arange(0, counts.max() + bin_width, bin_width)
+    hist, _ = np.histogram(counts, bins=edges)
+    result: Dict[str, int] = {}
+    for i in range(len(hist)):
+        if hist[i] > 0:
+            label = f"{int(edges[i])}-{int(edges[i + 1]) - 1}"
+            result[label] = int(hist[i])
+    return result
 
 
 def analyze(
@@ -80,7 +98,7 @@ def analyze(
     user_activity: Dict[str, float] = {}
     if user_col in df.columns:
         user_counts = df[user_col].value_counts().values.astype(np.float64)
-        user_activity = _activity_stats(user_counts)
+        user_activity = activity_stats(user_counts)
         user_activity["total_users"] = float(len(user_counts))
         logger.info("User activity: %d users analyzed.", len(user_counts))
     else:
@@ -90,7 +108,7 @@ def analyze(
     item_popularity: Dict[str, float] = {}
     if item_col in df.columns:
         item_counts = df[item_col].value_counts().values.astype(np.float64)
-        item_popularity = _activity_stats(item_counts)
+        item_popularity = activity_stats(item_counts)
         item_popularity["total_items"] = float(len(item_counts))
         logger.info("Item popularity: %d items analyzed.", len(item_counts))
     else:
@@ -135,8 +153,26 @@ def analyze(
                     "Less than 2 domains with users, skipping cross-domain overlap."
                 )
 
+    # ---- histograms and sorted popularity ----
+    user_activity_histogram: Optional[Dict[str, int]] = None
+    item_popularity_histogram: Optional[Dict[str, int]] = None
+    item_pop_sorted: Optional[List[float]] = None
+
+    if user_col in df.columns and user_activity:
+        user_counts = df[user_col].value_counts().values.astype(np.float64)
+        user_activity_histogram = _compute_histogram(user_counts)
+
+    if item_col in df.columns:
+        item_counts = df[item_col].value_counts().values.astype(np.float64)
+        item_popularity_histogram = _compute_histogram(item_counts)
+        sorted_counts = np.sort(item_counts)
+        item_pop_sorted = sorted_counts[-1000:].tolist() if len(sorted_counts) > 0 else None
+
     return UserItemResult(
         user_activity=user_activity,
         item_popularity=item_popularity,
         cross_domain_overlap=cross_domain_overlap,
+        item_popularity_sorted=item_pop_sorted,
+        user_activity_histogram=user_activity_histogram,
+        item_popularity_histogram=item_popularity_histogram,
     )

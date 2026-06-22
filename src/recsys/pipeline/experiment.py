@@ -20,6 +20,7 @@ v2 新增：
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -300,8 +301,21 @@ def write_status_file(
 def write_config_snapshot(run_dir: Path, config: ExperimentConfig) -> None:
     """将 fully resolved 配置快照写入 config.yaml。"""
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    # 转字典时递归处理：OrderedDict/deque 等 collections 类型转为 plain dict/list，
+    # 避免 yaml.safe_dump 抛出 RepresenterError
+    def _to_serializable(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            return {k: _to_serializable(v) for k, v in obj.items()}
+        if isinstance(obj, (list, tuple)):
+            return [_to_serializable(v) for v in obj]
+        if isinstance(obj, (str, int, float, bool, type(None))):
+            return obj
+        return str(obj)
+
+    cfg_dict = _to_serializable(asdict(config))
     (run_dir / "config.yaml").write_text(
-        yaml.safe_dump(asdict(config), sort_keys=False, allow_unicode=True),
+        yaml.safe_dump(cfg_dict, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
 
@@ -840,23 +854,25 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
                     hint=None,
                     traceback=traceback.format_exc(),
                 )
-                # 写失败状态
-                write_status_file(
-                    run_dir,
-                    ExperimentStatus.FAILED,
-                    run_id=run_id,
-                    dataset=config.dataset_name,
-                    model=config.model_name,
-                    seed=config.seed,
-                    started_at=started_at,
-                    error=err,
-                )
-                # 记日志
-                (logs_dir / "stderr.log").write_text(
-                    err.traceback or "", encoding="utf-8"
-                )
+                # 先标记失败状态（纯内存操作，不会失败）
                 result.status = ExperimentStatus.FAILED
                 result.error = err
+                # 再尝试落盘（文件 I/O 可能失败，不应覆盖 result.error）
+                with contextlib.suppress(Exception):
+                    write_status_file(
+                        run_dir,
+                        ExperimentStatus.FAILED,
+                        run_id=run_id,
+                        dataset=config.dataset_name,
+                        model=config.model_name,
+                        seed=config.seed,
+                        started_at=started_at,
+                        error=err,
+                    )
+                with contextlib.suppress(Exception):
+                    (logs_dir / "stderr.log").write_text(
+                        err.traceback or "", encoding="utf-8"
+                    )
                 raise  # 重新抛出，由最外层统一捕获
 
     # 初始化内存追踪变量（在 try 块外定义，异常时默认为 None）

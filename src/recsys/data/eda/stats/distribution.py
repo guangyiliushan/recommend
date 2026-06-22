@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ _CARDINALITY_BINS = [
 class DistributionResult:
     """Distribution analysis results."""
 
-    label_distribution: Dict[int, float]  # label_value → proportion
+    label_distribution: Dict[Any, float]  # label_value → proportion
     feature_cardinality: Dict[str, int]  # per-column unique count
     cardinality_bins: Dict[str, int]  # bin_label → column count
     dense_stats: Dict[str, Dict[str, float]]  # dense col → {mean, std, min, max, skew, zeros_ratio}
@@ -111,11 +112,20 @@ def analyze(
         )
 
     # ---- label distribution ----
-    label_distribution: Dict[int, float] = {}
+    label_distribution: Dict[Any, float] = {}
     if label_col in df.columns:
         label_counts = df[label_col].value_counts(normalize=True)
         for val, prop in label_counts.items():
-            label_distribution[int(val)] = round(float(prop), 4)
+            # Keep original type for non-integer labels
+            # Only convert to int if the value is a pure integer
+            try:
+                if isinstance(val, (int, np.integer)) or (isinstance(val, float) and val == int(val)):
+                    key = int(val)
+                else:
+                    key = val
+            except (ValueError, TypeError):
+                key = val
+            label_distribution[key] = round(float(prop), 4)
 
     # ---- feature cardinality ----
     feature_cardinality: Dict[str, int] = {}

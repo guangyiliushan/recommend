@@ -34,7 +34,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -121,6 +123,64 @@ _KNOWN_SUBSETS: Dict[str, Dict[str, Any]] = {
         "description": "Video modality embeddings",
     },
 }
+
+
+def _list_dataset_configs(repo_id: str) -> List[str]:
+    """List available HuggingFace dataset configs, returning [] on failure."""
+    try:
+        from datasets import get_dataset_config_names
+
+        return list(get_dataset_config_names(repo_id))
+    except Exception:
+        return []
+
+
+def _is_hf_offline_mode() -> bool:
+    """Return True when HuggingFace offline mode is explicitly enabled."""
+    return os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _list_cached_dataset_configs(root_dir: str, version: str) -> Set[str]:
+    """List locally cached TAAC2025 subset configs with complete dataset metadata."""
+    cache_root = Path(root_dir)
+    version_suffix = version.lower().replace("m", "_m")
+    dataset_roots = [
+        path
+        for path in cache_root.glob("TAAC2025___tencent_gr-*")
+        if path.is_dir() and path.name.endswith(version_suffix)
+    ]
+
+    cached_configs: Set[str] = set()
+    for dataset_root in dataset_roots:
+        for config_dir in dataset_root.iterdir():
+            if not config_dir.is_dir():
+                continue
+            has_dataset_info = any(
+                config_dir.glob("0.0.0/*/dataset_info.json")
+            )
+            if has_dataset_info:
+                cached_configs.add(config_dir.name)
+    return cached_configs
+
+
+def _find_cached_dataset_info(
+    root_dir: str, version: str, config: str
+) -> Optional[Path]:
+    """Find the cached dataset_info.json path for a TAAC2025 config."""
+    cache_root = Path(root_dir)
+    version_suffix = version.lower().replace("m", "_m")
+    for dataset_root in cache_root.glob("TAAC2025___tencent_gr-*"):
+        if not dataset_root.is_dir() or not dataset_root.name.endswith(version_suffix):
+            continue
+        matches = list(dataset_root.glob(f"{config}/0.0.0/*/dataset_info.json"))
+        if matches:
+            return matches[0]
+    return None
 
 
 # ============================================================================
@@ -262,7 +322,7 @@ class VectorStore:
     sampled_at_load: bool = False
 
     def __post_init__(self):
-        self.item_ids = np.asarray(self.item_ids, dtype=np.int64)
+        self.item_ids = np.asarray(self.item_ids)
         self.vectors = np.asarray(self.vectors, dtype=np.float32)
 
     def norms(self) -> np.ndarray:
@@ -313,6 +373,19 @@ def _estimate_subset_rows(repo_id: str, config: str, cache_dir: str) -> int:
 
     Returns 0 if the config is unavailable or cannot be queried.
     """
+    version = repo_id.rsplit("-", 1)[-1]
+    cached_info = _find_cached_dataset_info(cache_dir, version, config)
+    if cached_info is not None:
+        try:
+            data = json.loads(cached_info.read_text(encoding="utf-8"))
+            splits = data.get("splits", {})
+            for split in splits.values():
+                num_examples = split.get("num_examples")
+                if isinstance(num_examples, int) and num_examples > 0:
+                    return num_examples
+        except Exception:
+            pass
+
     try:
         from datasets import get_dataset_split_names
 
@@ -410,11 +483,45 @@ class TAAC2025Dataset(BaseDataset):
         """
         cache_dir = Path(self.root_dir) / "taac2025_cache"
         cache_path = cache_dir / f"manifest_{self._version}.json"
+        offline_cached_configs = _list_cached_dataset_configs(
+            self.root_dir, self._version
+        )
 
         # Try cache first
         cached = DatasetSchemaManifest.load(cache_path)
         if cached is not None:
-            return cached
+            if _is_hf_offline_mode():
+                cached_subset_configs = set(cached.subsets.keys())
+                if cached_subset_configs == offline_cached_configs:
+                    return cached
+
+                logger.info(
+                    "Schema manifest cache %s does not match offline cache "
+                    "for %s; rebuilding.",
+                    cache_path,
+                    self._repo_id,
+                )
+            else:
+                available_configs = set(_list_dataset_configs(self._repo_id))
+                if not available_configs:
+                    return cached
+
+                cached_vector_configs = {
+                    desc.hf_config
+                    for desc in cached.subsets.values()
+                    if desc.is_vector
+                }
+                available_vector_configs = {
+                    cfg for cfg in available_configs if cfg.startswith("mm_emb_")
+                }
+                if cached_vector_configs == available_vector_configs:
+                    return cached
+
+                logger.info(
+                    "Schema manifest cache %s is stale for %s; rebuilding.",
+                    cache_path,
+                    self._repo_id,
+                )
 
         # Build fresh
         manifest = self._build_manifest()
@@ -432,32 +539,71 @@ class TAAC2025Dataset(BaseDataset):
             supports_vector_embeddings=True,
         )
 
-        # Try to get commit hash for cache invalidation
-        try:
-            from datasets import get_dataset_config_names
+        cached_configs = _list_cached_dataset_configs(self.root_dir, self._version)
+        configs = _list_dataset_configs(self._repo_id)
+        if _is_hf_offline_mode() and cached_configs:
+            available_configs = cached_configs
+            logger.info(
+                "Using offline cached configs for %s: %s",
+                self._repo_id,
+                sorted(available_configs),
+            )
+        else:
+            available_configs = set(configs) if configs else set(_KNOWN_SUBSETS.keys())
+            if configs:
+                logger.debug(
+                    "Available HF configs for %s: %s", self._repo_id, configs
+                )
 
-            configs = get_dataset_config_names(self._repo_id)
-            logger.debug("Available HF configs for %s: %s", self._repo_id, configs)
-        except Exception:
-            configs = list(_KNOWN_SUBSETS.keys())
-
-        for name, info in _KNOWN_SUBSETS.items():
+        for name in ("seq", "user_feat", "item_feat", "candidate"):
+            info = _KNOWN_SUBSETS[name]
             hf_config = info["hf_config"]
-            # Only include subsets known to exist (or try anyway for vector)
-            if info.get("is_vector") or hf_config in ("seq", "user_feat", "item_feat", "candidate"):
-                try:
-                    est_rows = _estimate_subset_rows(self._repo_id, hf_config, self.root_dir)
-                except Exception:
-                    est_rows = 0
+            if hf_config not in available_configs:
+                continue
+            try:
+                est_rows = _estimate_subset_rows(self._repo_id, hf_config, self.root_dir)
+            except Exception:
+                est_rows = 0
 
+            manifest.subsets[name] = SubsetDescriptor(
+                name=name,
+                hf_config=hf_config,
+                primary_key=info["primary_key"],
+                join_key=info.get("join_key"),
+                estimated_rows=est_rows,
+                recommended_profile=info["recommended_profile"],
+                is_vector=False,
+                vector_dim=info.get("vector_dim"),
+                description=info["description"],
+            )
+
+        vector_configs = sorted(
+            cfg for cfg in available_configs if cfg.startswith("mm_emb_")
+        )
+        if vector_configs:
+            for cfg in vector_configs:
+                manifest.subsets[cfg] = SubsetDescriptor(
+                    name=cfg,
+                    hf_config=cfg,
+                    primary_key="item_id",
+                    join_key="item_id",
+                    estimated_rows=0,
+                    recommended_profile="vector",
+                    is_vector=True,
+                    vector_dim=None,
+                    description=f"Multimodal embedding subset ({cfg})",
+                )
+        else:
+            for name in ("mm_emb_text", "mm_emb_image", "mm_emb_video"):
+                info = _KNOWN_SUBSETS[name]
                 manifest.subsets[name] = SubsetDescriptor(
                     name=name,
-                    hf_config=hf_config,
+                    hf_config=info["hf_config"],
                     primary_key=info["primary_key"],
                     join_key=info.get("join_key"),
-                    estimated_rows=est_rows,
+                    estimated_rows=0,
                     recommended_profile=info["recommended_profile"],
-                    is_vector=info.get("is_vector", False),
+                    is_vector=True,
                     vector_dim=info.get("vector_dim"),
                     description=info["description"],
                 )
@@ -500,24 +646,34 @@ class TAAC2025Dataset(BaseDataset):
         seed: int,
     ) -> Tuple[Any, Optional[Dict[str, Any]]]:
         """Load a tabular subset (seq/user_feat/item_feat/candidate) with pre-sampling."""
-        import numpy as np
+        import pandas as pd
         from datasets import load_dataset
 
-        rng = np.random.default_rng(seed)
+        total = _estimate_subset_rows(self._repo_id, hf_config, self.root_dir)
+        load_meta: Optional[Dict[str, Any]] = None
+        if total > max_rows:
+            load_meta = {"original_rows": total, "sampled_at_load": True}
+            logger.info(
+                "Pre-sampled '%s' subset via streaming: %d → %d rows.",
+                hf_config,
+                total,
+                max_rows,
+            )
+            ds = load_dataset(
+                self._repo_id,
+                hf_config,
+                split="train",
+                streaming=True,
+                cache_dir=self.root_dir,
+            )
+            rows = list(islice(ds, max_rows))
+            return pd.DataFrame(rows), load_meta
 
         ds = load_dataset(
             self._repo_id, hf_config, split="train", cache_dir=self.root_dir
         )
-        total = len(ds)
-        load_meta: Optional[Dict[str, Any]] = None
-
-        if total > max_rows and hasattr(ds, "select"):
-            indices = sorted(rng.choice(total, max_rows, replace=False).tolist())
-            ds = ds.select(indices)
-            load_meta = {"original_rows": total, "sampled_at_load": True}
-            logger.info(
-                "Pre-sampled '%s' subset: %d → %d rows.", hf_config, total, max_rows
-            )
+        if total <= 0:
+            total = len(ds)
 
         return ds.to_pandas(), load_meta
 
@@ -528,45 +684,54 @@ class TAAC2025Dataset(BaseDataset):
         seed: int,
     ) -> Tuple[VectorStore, Optional[Dict[str, Any]]]:
         """Load a multimodal embedding subset (mm_emb_text/image/video) as VectorStore."""
-        import numpy as np
+        import pandas as pd
         from datasets import load_dataset
-
-        rng = np.random.default_rng(seed)
 
         desc = self.get_schema_manifest().get_subset(name)
         if desc is None:
             raise ValueError(f"Unknown subset: {name}")
 
         modality = name.replace("mm_emb_", "")
-
+        total = _estimate_subset_rows(self._repo_id, desc.hf_config, self.root_dir)
+        load_meta: Optional[Dict[str, Any]] = None
         try:
-            ds = load_dataset(
-                self._repo_id, desc.hf_config, split="train", cache_dir=self.root_dir
-            )
+            if total > max_rows:
+                load_meta = {"original_rows": total, "sampled_at_load": True}
+                logger.info(
+                    "Pre-sampled '%s' subset via streaming: %d → %d rows.",
+                    name,
+                    total,
+                    max_rows,
+                )
+                ds = load_dataset(
+                    self._repo_id,
+                    desc.hf_config,
+                    split="train",
+                    streaming=True,
+                    cache_dir=self.root_dir,
+                )
+                rows = list(islice(ds, max_rows))
+                df = pd.DataFrame(rows)
+            else:
+                ds = load_dataset(
+                    self._repo_id,
+                    desc.hf_config,
+                    split="train",
+                    cache_dir=self.root_dir,
+                )
+                if total <= 0:
+                    total = len(ds)
+                df = ds.to_pandas()
         except Exception as e:
             raise RuntimeError(
                 f"Failed to load mm_emb subset '{name}' "
                 f"(config='{desc.hf_config}'): {e}"
             ) from e
 
-        total = len(ds)
-        load_meta: Optional[Dict[str, Any]] = None
-
-        if total > max_rows and hasattr(ds, "select"):
-            indices = sorted(rng.choice(total, max_rows, replace=False).tolist())
-            ds = ds.select(indices)
-            load_meta = {"original_rows": total, "sampled_at_load": True}
-            logger.info(
-                "Pre-sampled '%s' subset: %d → %d rows.", name, total, max_rows
-            )
-
-        df = ds.to_pandas()
-        item_ids = df["item_id"].values.astype(np.int64)
-
         # Detect embedding column (usually named "emb" or the first float array)
         emb_col = None
         for col in df.columns:
-            if col == "item_id":
+            if col in {"item_id", "anonymous_cid"}:
                 continue
             sample = df[col].iloc[0]
             if isinstance(sample, (list, np.ndarray)) and len(sample) > 0:
@@ -578,6 +743,29 @@ class TAAC2025Dataset(BaseDataset):
                 f"No embedding column found in '{name}'. "
                 f"Columns: {list(df.columns)}"
             )
+
+        id_col = None
+        for candidate in ("item_id", "anonymous_cid", "cid"):
+            if candidate in df.columns:
+                id_col = candidate
+                break
+        if id_col is None:
+            scalar_cols = [
+                col
+                for col in df.columns
+                if col != emb_col and not isinstance(df[col].iloc[0], (list, np.ndarray))
+            ]
+            if scalar_cols:
+                id_col = scalar_cols[0]
+
+        if id_col is None:
+            logger.warning(
+                "No identifier column found in vector subset '%s'; falling back to row index.",
+                name,
+            )
+            item_ids = np.arange(len(df), dtype=np.int64)
+        else:
+            item_ids = df[id_col].to_numpy()
 
         vectors = np.array(df[emb_col].tolist(), dtype=np.float32)
         dim = vectors.shape[1]

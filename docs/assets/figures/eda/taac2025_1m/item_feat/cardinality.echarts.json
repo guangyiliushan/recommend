@@ -1,0 +1,72 @@
+{
+  "echarts_option": {
+    "title": {
+      "text": "Feature Cardinality"
+    },
+    "tooltip": {
+      "trigger": "axis"
+    },
+    "xAxis": {
+      "type": "category",
+      "data": [
+        "item_id",
+        "121",
+        "122",
+        "102",
+        "119",
+        "120",
+        "118",
+        "115",
+        "117",
+        "101",
+        "112",
+        "114",
+        "116",
+        "100"
+      ],
+      "axisLabel": {
+        "rotate": 45
+      }
+    },
+    "yAxis": {
+      "type": "value",
+      "name": "Unique Values"
+    },
+    "series": [
+      {
+        "type": "bar",
+        "data": [
+          500000,
+          408462,
+          40322,
+          40262,
+          2937,
+          2439,
+          1048,
+          395,
+          363,
+          50,
+          29,
+          18,
+          18,
+          6
+        ]
+      }
+    ]
+  },
+  "_eda_metadata": {
+    "dataset_id": "taac2025_1m",
+    "dataset_label": "taac2025_1M",
+    "run_tag": null,
+    "generated_at": "2026-06-22T08:46:26.439530+00:00",
+    "sample_strategy": "pending",
+    "total_rows": 4783154,
+    "sample_ratio": 1.0,
+    "strat_rows": 0,
+    "tail_rows": 0,
+    "union_rows": 500000,
+    "seed": 42,
+    "total_users": null,
+    "total_items": null
+  }
+}
