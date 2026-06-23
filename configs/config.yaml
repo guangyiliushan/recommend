@@ -5,6 +5,8 @@
 
 defaults:
   - _self_
+  - dataset: taac2026
+  - model: classical/itemcf
   - override hydra/hydra_logging: disabled
   - override hydra/job_logging: disabled
 
@@ -14,7 +16,7 @@ hydra:
     dir: .
 
 experiment:
-  name: "itemcf_demo"
+  name: "run"
   tags: [baseline, ranking]
   notes: "最小可运行基线"
   track_with: null
@@ -60,10 +62,19 @@ evaluation:
     - hit_rate@10
     - recall@10
     - mrr
+  primary_metric: null
   ranking_k: [10]
   threshold: 0.5
+  threshold_strategy: fixed
   generate_curves: false
+  curve_types: [roc, pr]
+  average: binary
+  pos_label: 1
+  per_group_metrics: true
+  sample_weight_enabled: false
   statistical_test: null
+  save_predictions: true
+  save_curves: true
 
 runtime:
   device: auto

@@ -30,14 +30,14 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, cast
 
 import numpy as np
 import pandas as pd
 import yaml
 
 from recsys.core.base_dataset import BaseDataset
-from recsys.core.base_model import BaseRecommender, Capability
+from recsys.core.base_model import BaseRecommender, Capability, NeuralRecommender
 from recsys.core.prediction_bundle import PredictionBundle
 from recsys.core.registry import DATASET_REGISTRY, MODEL_REGISTRY
 from recsys.evaluation.evaluator import (
@@ -139,7 +139,7 @@ class ExperimentConfig:
     model_name: str
     seed: int
 
-    output_dir: str = "./outputs/experiments"
+    output_dir: str = "./outputs/runs"
 
     # 各子组件配置
     data_config: Dict[str, Any] = field(default_factory=dict)
@@ -147,6 +147,9 @@ class ExperimentConfig:
     training_config: Dict[str, Any] = field(default_factory=dict)
     evaluation_config: Dict[str, Any] = field(default_factory=dict)
     runtime_config: Dict[str, Any] = field(default_factory=dict)
+
+    # 实验追踪（TensorBoard 默认开启）
+    track_with: str = "tensorboard"  # "tensorboard" | "wandb" | ""
 
     # 配置快照 hash（冻结时计算）
     config_hash: str = ""
@@ -466,7 +469,6 @@ def setup_runtime(runtime_config: Dict[str, Any]) -> None:
     """根据 runtime_config 设置 seed、device、日志级别等。"""
     import random
 
-    import numpy as np
     import torch
 
     seed: int = runtime_config.get("seed", 42)
@@ -561,12 +563,12 @@ def route_execution(
     - 否则     → _execute_nontrainable_path
     """
     if model.supports(Capability.TRAINABLE):
-        return _execute_trainable_path(model, dataset, config)
+        return _execute_trainable_path(cast(NeuralRecommender, model), dataset, config)
     return _execute_nontrainable_path(model, dataset, config)
 
 
 def _execute_trainable_path(
-    model: BaseRecommender,
+    model: NeuralRecommender,
     dataset: BaseDataset,
     config: ExperimentConfig,
 ) -> PredictionBundle:
@@ -607,13 +609,16 @@ def _execute_trainable_path(
         runtime_config=config.runtime_config,
         run_dir=run_dir,
         monitor_metric=primary_metric,
+        track_with=config.track_with,
     )
 
     # 3. 训练
     trainer.fit(lit_model, train_loader, val_loader)
 
     # 4. 预测
-    predictions = trainer.predict(lit_model, test_loader)
+    predictions: List[Dict[str, Any]] = cast(
+        List[Dict[str, Any]], trainer.predict(lit_model, test_loader)
+    )
     # predictions 是 List[Dict]，来自 LightningRecommender.predict_step
 
     # 5. 组装 PredictionBundle
@@ -637,10 +642,14 @@ def _execute_nontrainable_path(
     train_split = dataset.get_split("train")
     test_split = dataset.get_split("test")
 
+    # Fast-path helpers 是运行时注入的方法，HuggingFace Dataset 类型桩未覆盖
+    _train: Any = train_split  # type: ignore[assignment]
+    _test: Any = test_split  # type: ignore[assignment]
+
     # 1. fit — 优先使用紧凑映射直接传递
-    if hasattr(train_split, "extract_user_item_mapping_fast"):
+    if hasattr(_train, "extract_user_item_mapping_fast"):
         logger.info("Using compact user_items_dict for fit()")
-        train_mapping = train_split.extract_user_item_mapping_fast()
+        train_mapping = _train.extract_user_item_mapping_fast()
         if not train_mapping:
             raise RuntimeError(
                 "无法从 train split 提取用户-物品映射。"
@@ -670,18 +679,22 @@ def _execute_nontrainable_path(
         train_mapping = extract_user_item_mapping_from_split(train_split)
 
     # 2. predict — 需要转换为 Set[int] 用于 O(1) 查找
-    if hasattr(test_split, "extract_user_item_mapping_fast"):
-        test_mapping_raw = test_split.extract_user_item_mapping_fast()
-        # 转换 np.ndarray → set
-        test_mapping = {
-            uid: set(items.tolist()) if hasattr(items, "tolist") else set(items)
-            for uid, items in test_mapping_raw.items()
-        }
+    if hasattr(_test, "extract_user_item_mapping_fast"):
+        test_mapping_raw = _test.extract_user_item_mapping_fast()
+        # 转换 np.ndarray → set（np.ndarray 有 .tolist()，set 没有）
+        test_mapping: Dict[int, Set[int]] = {}
+        for uid, items in test_mapping_raw.items():
+            if hasattr(items, "tolist"):
+                test_mapping[uid] = set(items.tolist())  # type: ignore[union-attr]
+            else:
+                test_mapping[uid] = set(items)
         # train_mapping 也需要转换为 set（用于 predict 中的过滤）
-        train_mapping_for_predict = {
-            uid: set(items.tolist()) if hasattr(items, "tolist") else set(items)
-            for uid, items in train_mapping.items()
-        }
+        train_mapping_for_predict: Dict[int, Set[int]] = {}
+        for uid, items in train_mapping.items():
+            if hasattr(items, "tolist"):
+                train_mapping_for_predict[uid] = set(items.tolist())  # type: ignore[union-attr]
+            else:
+                train_mapping_for_predict[uid] = set(items)
     else:
         test_mapping = extract_user_item_mapping_from_split(test_split)
         train_mapping_for_predict = train_mapping
@@ -711,8 +724,6 @@ def _assemble_bundle_from_predictions(
     predict_step 返回的每个 dict 至少包含 ``scores`` 和 ``labels``，
     可选包含 ``group_ids``、``candidate_ids``、``task_outputs``。
     """
-    import numpy as np
-
     all_scores = []
     all_labels = []
     all_group_ids = []
@@ -746,11 +757,21 @@ def _assemble_bundle_from_predictions(
                 )
 
     model_meta = model.get_model_metadata() if hasattr(model, "get_model_metadata") else {}
-    task_type = model_meta.get("task_type", "pointwise")
-    problem_type = model_meta.get("problem_type", "binary")
+    # 优先使用实例级运行时属性（如 HyFormer 通过 model.params.task=ranking 动态设置），
+    # 因为 get_model_metadata() 是 classmethod，返回的是静态类级别值。
+    task_type = (
+        getattr(model, "task_type", None)
+        or model_meta.get("task_type")
+        or "pointwise"
+    )
+    problem_type = (
+        getattr(model, "problem_type", None)
+        or model_meta.get("problem_type")
+        or "binary"
+    )
     score_type = "raw_score"
 
-    # 推断 task_type：有 group_ids 时为 ranking
+    # 推断 task_type：有 group_ids 且当前为 pointwise 时自动升级为 ranking
     if all_group_ids and task_type == "pointwise":
         task_type = "ranking"
 
@@ -925,20 +946,26 @@ def run_experiment(config: ExperimentConfig) -> ExperimentResult:
         # ---- 7. model 构建 ----
         def _build_model() -> BaseRecommender:
             model_cls = MODEL_REGISTRY.get(config.model_name)
+            schema_metadata: Dict[str, Any] = {
+                "num_users": dataset.num_users,
+                "num_items": dataset.num_items,
+                "feature_cols": dataset.feature_cols,
+                # ID 空间元信息 — 用 getattr 兼容非 TAAC2026 数据集
+                "padding_idx": getattr(dataset, "_padding_idx", 0),
+                "user_id_space": getattr(dataset, "_user_id_space", "raw"),
+                "item_id_space": getattr(dataset, "_item_id_space", "raw"),
+                "max_user_id": getattr(dataset, "_num_users", dataset.num_users),
+                "max_item_id": getattr(dataset, "_num_items", dataset.num_items),
+                **config.model_config.get("schema_extra", {}),
+            }
+            # 检测数据集是否提供结构化特征规格（通用扩展点）
+            if hasattr(dataset, "get_schema_metadata"):
+                extra_schema = dataset.get_schema_metadata()
+                if extra_schema:
+                    schema_metadata.update(extra_schema)
             model = model_cls(
                 config=config.model_config.get("params", {}),
-                schema_metadata={
-                    "num_users": dataset.num_users,
-                    "num_items": dataset.num_items,
-                    "feature_cols": dataset.feature_cols,
-                    # ID 空间元信息 — 用 getattr 兼容非 TAAC2026 数据集
-                    "padding_idx": getattr(dataset, "_padding_idx", 0),
-                    "user_id_space": getattr(dataset, "_user_id_space", "raw"),
-                    "item_id_space": getattr(dataset, "_item_id_space", "raw"),
-                    "max_user_id": getattr(dataset, "_num_users", dataset.num_users),
-                    "max_item_id": getattr(dataset, "_num_items", dataset.num_items),
-                    **config.model_config.get("schema_extra", {}),
-                },
+                schema_metadata=schema_metadata,
             )
             return model
 

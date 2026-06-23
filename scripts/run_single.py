@@ -51,8 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-dir",
-        default="./outputs/experiments",
-        help="实验输出目录 (默认: ./outputs/experiments)",
+        default="./outputs/runs",
+        help="实验输出目录 (默认: ./outputs/runs)",
     )
     parser.add_argument(
         "--name",
@@ -250,7 +250,7 @@ def main() -> None:
             "warmup_epochs": args.warmup_epochs,
         },
         evaluation_config={
-            "metrics": args.metrics or [],
+            "metrics": args.metrics,  # None = use model defaults (not [])
             "ranking_k": args.ranking_k,
             "generate_curves": not args.no_curves,
         },

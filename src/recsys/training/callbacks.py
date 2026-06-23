@@ -21,7 +21,7 @@ from pytorch_lightning.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
-    RichProgressBar,
+    TQDMProgressBar,
 )
 from pytorch_lightning.callbacks.callback import Callback
 
@@ -206,7 +206,7 @@ def build_callbacks(
     # -- 进度条 --
     enable_progress_bar = config.get("enable_progress_bar", True)
     if enable_progress_bar:
-        callbacks.append(RichProgressBar())
+        callbacks.append(TQDMProgressBar(refresh_rate=1, leave=False))
 
     # -- 自定义 Callback --
     grad_every = config.get("gradient_monitor_every", 0)

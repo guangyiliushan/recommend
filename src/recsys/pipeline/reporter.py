@@ -270,7 +270,6 @@ def aggregate_leaderboard(
             groups.setdefault(key, []).append(val)
 
     # 计算 mean / std
-    import statistics
     rows: List[LeaderboardRow] = []
     for (model, dataset), values in groups.items():
         if not values:

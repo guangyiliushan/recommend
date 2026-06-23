@@ -116,8 +116,9 @@ class SyntheticDataset(BaseDataset):
         user_probs = np.arange(1, self._num_users + 1) ** (-self._popularity_power)
         user_probs = user_probs / user_probs.sum()
 
-        # 3. 生成交互数据
-        interactions = []
+        # 3. 生成交互数据（使用 set 做 O(1) 去重，避免 list O(n) 线性搜索）
+        interactions: List[Tuple[int, int]] = []
+        seen_pairs: set = set()
         ratings = {} if self._rating_scale is not None else None
 
         # 使用重采样选择交互对
@@ -129,32 +130,30 @@ class SyntheticDataset(BaseDataset):
         )
 
         for user_id, item_id in zip(selected_users, selected_items, strict=False):
-            pair = (user_id, item_id)
-
-            # 避免重复交互
-            if pair not in interactions:
+            pair = (int(user_id), int(item_id))
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
                 interactions.append(pair)
-
-                # 生成显式评分
                 if ratings is not None and self._rating_scale is not None:
                     min_rating, max_rating = self._rating_scale
                     rating = np.random.uniform(min_rating, max_rating)
                     ratings[pair] = float(rating)
 
         # 如果去重后不够，用更宽松的策略补充
-        while len(interactions) < self._num_interactions:
-            # 随机选择用户和物品
+        attempts = 0
+        max_attempts = self._num_interactions * 10
+        while len(interactions) < self._num_interactions and attempts < max_attempts:
             user_id = np.random.randint(0, self._num_users)
             item_id = np.random.randint(0, self._num_items)
             pair = (user_id, item_id)
-
-            if pair not in interactions:
+            if pair not in seen_pairs:
+                seen_pairs.add(pair)
                 interactions.append(pair)
-
                 if ratings is not None and self._rating_scale is not None:
                     min_rating, max_rating = self._rating_scale
                     rating = np.random.uniform(min_rating, max_rating)
                     ratings[pair] = float(rating)
+            attempts += 1
 
         return interactions, ratings
 

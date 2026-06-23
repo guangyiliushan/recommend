@@ -40,7 +40,7 @@ from pytorch_lightning.utilities.types import STEP_OUTPUT
 from recsys.core.base_model import Batch, ModelOutput, NeuralRecommender
 from recsys.training.callbacks import build_callbacks
 from recsys.training.distributed import get_strategy_kwargs, resolve_strategy
-from recsys.training.optimizers import OptimizerConfig, build_optimizer
+from recsys.training.optimizers import OptimizerConfig, build_dual_optimizers, build_optimizer
 from recsys.training.schedulers import (
     SchedulerConfig,
     build_scheduler,
@@ -117,7 +117,13 @@ class LightningRecommender(pl.LightningModule):
         if isinstance(losses, dict):
             total_loss = torch.tensor(0.0, device=self.device)
             for name, loss_val in losses.items():
-                # 避免与下文 `train/loss` 重复 log（Lightning 不允许同一 step 同名不同参数）
+                # NaN/Inf 检测 — 防止单步异常污染全体参数
+                if torch.isnan(loss_val) or torch.isinf(loss_val):
+                    logger.warning(
+                        "train_step=%d: loss '%s' is NaN/Inf (value=%s), 跳过本步",
+                        batch_idx, name, float(loss_val.detach().cpu()),
+                    )
+                    return None  # Lightning 跳过本步梯度更新
                 if name != "loss":
                     self.log(
                         f"train/{name}",
@@ -129,6 +135,11 @@ class LightningRecommender(pl.LightningModule):
                 total_loss = total_loss + loss_val
         else:
             total_loss = losses
+            if torch.isnan(total_loss) or torch.isinf(total_loss):
+                logger.warning(
+                    "train_step=%d: total_loss is NaN/Inf, 跳过本步", batch_idx,
+                )
+                return None
 
         self.log("train/loss", total_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log("train/loss_step", total_loss, on_step=True, on_epoch=False)
@@ -138,7 +149,7 @@ class LightningRecommender(pl.LightningModule):
     def validation_step(
         self, batch: Dict[str, Any], batch_idx: int
     ) -> STEP_OUTPUT:
-        """验证 step。
+        """验证 step — 含 NaN 守卫。
 
         只计算 val_loss，不做完整 evaluator 级指标计算。
         """
@@ -149,7 +160,9 @@ class LightningRecommender(pl.LightningModule):
         if isinstance(losses, dict):
             total_loss = torch.tensor(0.0, device=self.device)
             for name, loss_val in losses.items():
-                # 避免与下文 `val/loss` 重复 log（Lightning 不允许同一 step 同名不同参数）
+                if torch.isnan(loss_val) or torch.isinf(loss_val):
+                    logger.warning("val loss '%s' is NaN/Inf", name)
+                    continue
                 if name != "loss":
                     self.log(
                         f"val/{name}",
@@ -162,6 +175,8 @@ class LightningRecommender(pl.LightningModule):
         else:
             total_loss = losses
 
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            total_loss = torch.tensor(0.0, device=self.device)
         self.log("val/loss", total_loss, on_step=False, on_epoch=True, prog_bar=True)
         return total_loss
 
@@ -177,18 +192,13 @@ class LightningRecommender(pl.LightningModule):
         batch_idx: int,
         dataloader_idx: int = 0,
     ) -> Dict[str, Any]:
-        """预测 step。
+        """预测 step — 无梯度模式，节省显存。
 
         返回标准化中间预测块，供 pipeline 汇总为 PredictionBundle。
-        不在此写入 predictions.parquet。
-
-        Returns
-        -------
-        Dict[str, Any]
-            包含 model_output 和 batch 信息的预测块。
         """
-        b = self._dict_to_batch(batch)
-        output = self.model.forward(b)
+        with torch.no_grad():
+            b = self._dict_to_batch(batch)
+            output = self.model.forward(b)
 
         # 提取预测分数
         scores: Optional[torch.Tensor] = None
@@ -204,13 +214,20 @@ class LightningRecommender(pl.LightningModule):
         elif b.has("labels"):
             labels = b.labels
 
+        # 提取 group_ids：优先显式 group_id，其次 user_id（推荐排序中 user 即 group）
+        group_ids = None
+        if b.has("group_id") and b.group_id is not None:
+            group_ids = b.group_id.cpu()
+        elif b.has("user_id") and b.user_id is not None:
+            group_ids = b.user_id.cpu()
+
         return {
             "scores": scores.cpu() if scores is not None else None,
             "labels": labels.cpu() if labels is not None else None,
             "task_outputs": {
                 k: v.cpu() for k, v in output.task_outputs.items()
             } if output.task_outputs else None,
-            "group_ids": b.group_id.cpu() if b.has("group_id") and b.group_id is not None else None,
+            "group_ids": group_ids,
             "candidate_ids": (
                 b.candidate_item_ids.cpu()
                 if b.has("candidate_item_ids") and b.candidate_item_ids is not None
@@ -227,7 +244,46 @@ class LightningRecommender(pl.LightningModule):
         """配置 optimizer 和 scheduler。
 
         Lightning 标准入口，调用 optimizers.py / schedulers.py 工厂。
+        当 config.name == "dual_adagrad_adamw" 时返回双优化器。
         """
+        # 双优化器分支：Adagrad(sparse) + AdamW(dense)
+        if (
+            self._optimizer_config.name == "dual_adagrad_adamw"
+            and hasattr(self.model, "get_sparse_params")
+            and len(self.model.get_sparse_params()) > 0
+        ):
+            sparse_opt, dense_opt = build_dual_optimizers(
+                self.model,
+                self._optimizer_config,
+                sparse_lr=self._optimizer_config.sparse_lr,
+            )
+            scheduler_output = build_scheduler(
+                dense_opt,
+                self._scheduler_config,
+                total_steps=self._total_steps,
+            )
+            dense_spec: Dict[str, Any] = {
+                "optimizer": dense_opt,
+            }
+            if scheduler_output.scheduler_type == "plateau":
+                dense_spec["lr_scheduler"] = {
+                    "scheduler": scheduler_output.scheduler,
+                    "monitor": scheduler_output.monitor or "val_loss",
+                    "interval": scheduler_output.interval,
+                    "frequency": scheduler_output.frequency,
+                }
+            else:
+                dense_spec["lr_scheduler"] = {
+                    "scheduler": scheduler_output.scheduler,
+                    "interval": scheduler_output.interval,
+                    "frequency": scheduler_output.frequency,
+                }
+            return [
+                {"optimizer": sparse_opt, "frequency": 1},
+                dense_spec,
+            ]
+
+        # 原有单优化器路径（向后兼容）
         optimizer = build_optimizer(self.model, self._optimizer_config)
 
         scheduler_output = build_scheduler(
@@ -339,7 +395,7 @@ class TrainerFactory:
     ) -> None:
         self._training_config = training_config or {}
         self._runtime_config = runtime_config or {}
-        self._run_dir = run_dir or Path("outputs/experiments/default")
+        self._run_dir = run_dir or Path("outputs/runs/_fallback")
         self._monitor_metric = monitor_metric
         self._track_with = track_with
 
@@ -381,12 +437,15 @@ class TrainerFactory:
         trainer_kwargs: Dict[str, Any] = {
             **strategy_kwargs,
             "max_epochs": self._training_config.get("epochs", 10),
-            "gradient_clip_val": self._training_config.get("gradient_clip_val"),
+            "gradient_clip_val": self._training_config.get("gradient_clip_val", 1.0),
+            "gradient_clip_algorithm": self._training_config.get(
+                "gradient_clip_algorithm", "norm"
+            ),
             "accumulate_grad_batches": self._training_config.get(
                 "accumulate_grad_batches", 1
             ),
             "callbacks": callbacks,
-            "logger": loggers if loggers else True,  # True = Lightning 默认 logger
+            "logger": loggers if loggers else True,
             "log_every_n_steps": self._training_config.get("log_every_n_steps", 50),
             "enable_checkpointing": True,
             "deterministic": self._runtime_config.get("deterministic", False),
@@ -450,6 +509,7 @@ class TrainerFactory:
             lr=tc.get("learning_rate", 1e-3),
             weight_decay=tc.get("weight_decay", 1e-5),
             param_group_config=tc.get("param_group_config"),
+            sparse_lr=tc.get("sparse_lr", 0.05),
         )
 
     def _build_scheduler_config(self) -> SchedulerConfig:

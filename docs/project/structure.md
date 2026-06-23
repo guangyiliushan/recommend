@@ -153,7 +153,7 @@ tests/
 
 ### `outputs/`
 
-单实验结果（`outputs/experiments/{run_id}/`）与批量 Benchmark 聚合结果（`outputs/benchmarks/{benchmark_name}/`）的输出目录。默认不建议纳入版本控制。
+单实验结果（`outputs/runs/{run_id}/`）与批量 Benchmark 聚合结果（`outputs/benchmarks/{benchmark_name}/`）的输出目录。默认不建议纳入版本控制。
 
 ## `src/recsys/` 分层
 

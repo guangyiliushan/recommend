@@ -1,20 +1,22 @@
 # Benchmark: Unified Architecture & Generative (2024–2026)
-# Models: HSTU, OneTrans, HyFormer, GenRec, COBRA
-# 状态：planned — 模型和数据集均未实现
+# Models: HyFormer (已注册), HSTU/OneTrans/GenRec/COBRA (占位)
 #
-# 原引用：HSTU, OneTrans, HyFormer, GenRec, COBRA + criteo_kaggle
-# 这些模型当前均为占位文件，数据集也未注册。
-# 本文件保留为预留模板，待模型实现后启用。
+# 当前仅 hyformer 已实现。其余模型文件存在但 register 装饰器被注释。
+# Criteo 数据集未注册，使用 taac2026 作为替代。
+#
+# 用法:
+#   python scripts/run_benchmark.py --config configs/experiment/benchmark_unified_gen.yaml
 
-# experiment:
-#   name: "benchmark_unified_gen"
-#   seed: 42
-#   device: "auto"
-#   output_dir: "./outputs"
-#
-# datasets:
-#   - "criteo_kaggle"
-#
-# models:
-#   - name: "HSTU"
-#     family: "unified"
+experiment:
+  name: "benchmark_unified_gen"
+  seed: 42
+  device: "auto"
+  output_dir: "./outputs"
+
+datasets:
+  - "taac2026_data_sample"       # CTR/CVR 点式预测（HyFormer 降级双塔模式）
+  - "taac2026_second_round"      # CTR/CVR + 多域序列（HyFormer 完整 PCVRHyFormer 模式）
+
+models:
+  - name: "hyformer"
+    family: "unified"

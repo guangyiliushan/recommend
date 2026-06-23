@@ -1,7 +1,7 @@
 """Unified architectures & Scaling Law (2024–2026): HyFormer, HSTU, InterFormer, OneTrans, HoMer, MTmixAtt.
 
 已实现：
-- hyformer (HyFormerAdapter): 双塔神经网络，支持稀疏/密集参数分离
+- hyformer (HyFormerAdapter): 通用任务适配 HyFormer 架构，支持 5 种核心任务类型
 
 预留（占位/未实现）：
 - hstu.py (HSTU)

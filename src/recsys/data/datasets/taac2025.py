@@ -31,6 +31,7 @@ Usage:
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import logging
@@ -41,6 +42,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
+import pyarrow as pa
 import torch
 from torch.utils.data import Dataset
 
@@ -399,6 +401,228 @@ def _estimate_subset_rows(repo_id: str, config: str, cache_dir: str) -> int:
         return len(ds)
     except Exception:
         return 0
+
+
+# ============================================================================
+# HyFormer 结构化特征支持 — 零拷贝特征加载 + 结构化 Split
+# ============================================================================
+
+# TAAC2025 user_feat 列定义
+_USER_FEAT_SCALAR_COLS = ["103", "104", "105", "109"]  # int64 标量
+_USER_FEAT_LIST_COLS = ["106", "107", "108", "110"]     # List[int64] 多值
+_USER_FEAT_ALL_COLS = _USER_FEAT_SCALAR_COLS + _USER_FEAT_LIST_COLS
+
+# TAAC2025 item_feat 列定义 — 12 个 int64 标量
+_ITEM_FEAT_COLS = [
+    "100", "101", "102", "112", "114", "115", "116",
+    "117", "118", "119", "120", "121", "122",
+]
+
+# HyFormer 序列域配置：行为序列域，sideinfo = [item_id, action_type]
+_SEQ_DOMAIN_NAME = "behavior"
+_SEQ_SIDEINFO_COLS = 2  # item_id + action_type
+
+
+def _log_memory(fmt: str, *args: Any) -> None:
+    """Log memory usage for OOM diagnosis. Only logs if psutil is available."""
+    try:
+        import psutil
+        proc = psutil.Process()
+        mem_gb = proc.memory_info().rss / (1024 ** 3)
+        logger.debug(fmt + "  [mem=%.1f GB]", *args, mem_gb)
+    except Exception:
+        logger.debug(fmt, *args)
+
+
+def _extract_scalar_int_col(arrow_table, col_name: str) -> np.ndarray:
+    """从 Arrow 表中提取标量 int64 列为 numpy 数组（零拷贝优先）。"""
+    col = arrow_table.column(col_name)
+    # 合并可能的多个 chunk 为单个数组
+    arr = col.chunks[0] if len(col.chunks) == 1 else pa.concat_arrays(col.chunks)
+    return arr.to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+
+
+def _extract_list_int_col(
+    arrow_table, col_name: str,
+) -> Tuple[np.ndarray, np.ndarray, int]:
+    """从 Arrow 表中提取 List<int64> 列。
+
+    Returns:
+        (flat_values, offsets, max_len)
+        - flat_values: (total_elements,) 展平后的所有 int 值
+        - offsets: (n_rows + 1,) 每行的起止偏移
+        - max_len: 所有行中最大列表长度
+    """
+    col = arrow_table.column(col_name)
+    list_arr = col.chunks[0] if len(col.chunks) == 1 else pa.concat_arrays(col.chunks)
+    offsets = list_arr.offsets.to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+    flat_vals = list_arr.values.to_numpy(zero_copy_only=False).astype(np.int64, copy=False)
+    # 计算最大列表长度
+    max_len = int((offsets[1:] - offsets[:-1]).max()) if len(offsets) > 1 else 0
+    return flat_vals, offsets, max_len
+
+
+def _build_feature_specs_from_arrays(
+    scalar_max_vals: Dict[str, int],
+    list_max_vals: Dict[str, int],
+    list_max_lens: Dict[str, int],
+    scalar_cols: List[str],
+    list_cols: List[str],
+    max_vocab_cap: int = 500_000,
+) -> Tuple[List[Tuple[int, int, int]], int]:
+    """从预扫描的最大值构建 feature_specs。
+
+    feature_specs = [(vocab_size, offset, length), ...]
+    顺序：scalar_cols（length=1），然后 list_cols（length = max_list_len）。
+
+    Returns:
+        (feature_specs, total_int_dim)
+    """
+    specs: List[Tuple[int, int, int]] = []
+    offset = 0
+    for col in scalar_cols:
+        raw_vocab = scalar_max_vals.get(col, 0) + 1
+        vocab = min(raw_vocab, max_vocab_cap + 1)
+        specs.append((vocab, offset, 1))
+        offset += 1
+    for col in list_cols:
+        raw_vocab = list_max_vals.get(col, 0) + 1
+        vocab = min(raw_vocab, max_vocab_cap + 1)
+        length = list_max_lens.get(col, 1)
+        specs.append((vocab, offset, length))
+        offset += length
+    return specs, offset
+
+
+class _StructuredSequenceSplit(Dataset[Dict[str, torch.Tensor]]):
+    """惰性序列 split — 产出 HyFormer 结构化特征键。
+
+    与 SequenceSplit 相同的内存优化策略（O(num_users) 存储），
+    额外产出 user_int_feats / item_int_feats / seq_data / seq_lens。
+
+    Memory: O(num_users + num_items_in_pool) 用于特征查找表。
+    """
+
+    def __init__(  # noqa: PLR0913
+        self,
+        user_ids: np.ndarray,
+        item_sequences: List[np.ndarray],
+        action_sequences: List[np.ndarray],
+        item_pool: Optional[torch.Tensor] = None,
+        max_seq_len: int = 50,
+        neg_sample_count: int = 4,
+        candidate_pool: Optional[torch.Tensor] = None,
+        # ---- 结构化特征 ----
+        user_feat_dict: Optional[Dict[int, np.ndarray]] = None,
+        item_feat_dict: Optional[Dict[int, np.ndarray]] = None,
+    ) -> None:
+        self._user_ids = user_ids
+        self._item_sequences = item_sequences
+        self._action_sequences = action_sequences
+        self._item_pool = item_pool
+        self.max_seq_len = max_seq_len
+        self.neg_sample_count = neg_sample_count
+        self._candidate_pool = candidate_pool
+        self._user_feat_dict = user_feat_dict or {}
+        self._item_feat_dict = item_feat_dict or {}
+
+        # 预计算累计长度用于 O(log n) 索引查找
+        self._lengths = np.array(
+            [max(0, len(seq) - 1) for seq in item_sequences], dtype=np.int64,
+        )
+        self._cum_lengths = np.cumsum(self._lengths)
+
+    def __len__(self) -> int:
+        return int(self._cum_lengths[-1]) if len(self._cum_lengths) > 0 else 0
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        if idx < 0:
+            idx += len(self)
+
+        # 二分查找定位用户
+        user_idx = int(np.searchsorted(self._cum_lengths, idx, side="right"))
+        prev_cum = int(self._cum_lengths[user_idx - 1]) if user_idx > 0 else 0
+        pos = idx - prev_cum + 1  # 序列中的位置（1-based）
+
+        uid = int(self._user_ids[user_idx])
+        items = self._item_sequences[user_idx]
+        actions = self._action_sequences[user_idx]
+
+        # 带标签序列：items[:pos] → 预测 items[pos]
+        item_ids = items[:pos][: self.max_seq_len].copy()
+        labels = items[1: pos + 1][: self.max_seq_len].copy()
+        action_ids = actions[:pos][: self.max_seq_len].copy()
+
+        # Padding
+        actual_len = min(len(item_ids), self.max_seq_len)
+        pad_len = self.max_seq_len - len(item_ids)
+        if pad_len > 0:
+            item_ids = np.pad(item_ids, (0, pad_len), constant_values=0)
+            labels = np.pad(labels, (0, pad_len), constant_values=-100)
+            action_ids = np.pad(action_ids, (0, pad_len), constant_values=0)
+
+        # 候选物品池
+        if self._candidate_pool is not None:
+            candidate_items = self._candidate_pool[:100]
+        else:
+            candidate_items = torch.as_tensor(
+                np.array([], dtype=np.int64), dtype=torch.long,
+            )
+
+        # ---- 结构化特征 ----
+        # user_int_feats
+        user_feat = self._user_feat_dict.get(uid)
+        if user_feat is not None:
+            user_int_feats = torch.as_tensor(user_feat, dtype=torch.long)
+        else:
+            user_int_feats = torch.zeros(1, dtype=torch.long)
+
+        # item_int_feats（目标物品）
+        target_iid = int(item_ids[actual_len - 1]) if actual_len > 0 else 0
+        item_feat = self._item_feat_dict.get(target_iid)
+        if item_feat is not None:
+            item_int_feats = torch.as_tensor(item_feat, dtype=torch.long)
+        else:
+            item_int_feats = torch.zeros(1, dtype=torch.long)
+
+        # seq_data / seq_lens
+        # behavior 域：S=2 (item_id, action_type), L=max_seq_len
+        seq_data_tensor = torch.stack([
+            torch.as_tensor(item_ids, dtype=torch.long),
+            torch.as_tensor(action_ids, dtype=torch.long),
+        ], dim=0)  # (2, L)
+        seq_lens_tensor = torch.as_tensor(actual_len, dtype=torch.long)
+
+        result: Dict[str, Any] = {
+            # 旧键（向后兼容）
+            "user_id": torch.as_tensor(uid, dtype=torch.long),
+            "item_id": torch.as_tensor(target_iid, dtype=torch.long),
+            "item_ids": torch.as_tensor(item_ids, dtype=torch.long),
+            "labels": torch.as_tensor(labels, dtype=torch.long),
+            "candidate_items": candidate_items,
+            # HyFormer 结构化键
+            "user_int_feats": user_int_feats,
+            "item_int_feats": item_int_feats,
+            "seq_data": {_SEQ_DOMAIN_NAME: seq_data_tensor},
+            "seq_lens": {_SEQ_DOMAIN_NAME: seq_lens_tensor},
+        }
+        return result
+
+    # ---- 快速提取（向后兼容） ----
+
+    def iter_user_item_pairs_fast(self):
+        """Yield (user_id, item_id) pairs."""
+        for uid, items in zip(self._user_ids, self._item_sequences, strict=False):
+            uid_int = int(uid)
+            for iid in items.tolist():
+                yield uid_int, iid
+
+    def extract_user_item_mapping_fast(self) -> dict:
+        """Extract user_id → item_ids from compact mapping."""
+        return {
+            int(uid): items
+            for uid, items in zip(self._user_ids, self._item_sequences, strict=False)
+        }
 
 
 class TAAC2025Dataset(BaseDataset):
@@ -810,20 +1034,28 @@ class TAAC2025Dataset(BaseDataset):
     # ----- sequence cache ------------------------------------------------
 
     def _get_cache_path(self) -> Path:
-        """Get the cache file path for preprocessed sequences."""
+        """Get the cache file path for preprocessed sequences.
+
+        Cache is shared across different split_ratios — only parameters that
+        affect the *content* of preprocessed data are included in the key.
+
+        One cache file per (version, min_seq_len, min_action_type) combination.
+        This means all experiments with different train/val/test splits share
+        the same cached data, saving disk and enabling offline reuse.
+        """
         config_str = (
-            f"{self._version}_{self.split_ratios}_{self.min_seq_len}"
-            f"_at{self._min_action_type}"
+            f"{self._version}_L{self.min_seq_len}_at{self._min_action_type}"
         )
         config_hash = hashlib.md5(config_str.encode()).hexdigest()[:8]
         cache_dir = Path(self.root_dir) / "taac2025_cache"
         cache_dir.mkdir(parents=True, exist_ok=True)
-        return cache_dir / f"sequences_{self._version}_{config_hash}.npz"
+        return cache_dir / f"sequences_{config_hash}.npz"
 
-    def _load_from_cache(self, cache_path: Path) -> Optional[Tuple[Dict, np.ndarray, List[np.ndarray]]]:
+    def _load_from_cache(self, cache_path: Path) -> Optional[Tuple[Dict, np.ndarray, List[np.ndarray], List[np.ndarray]]]:
         """Load preprocessed compact sequences from cache if exists.
 
-        Returns (meta, user_ids, item_sequences) or None.
+        Returns (meta, user_ids, item_sequences, action_sequences) or None.
+        action_sequences may be empty list for legacy caches.
         """
         if not cache_path.exists():
             return None
@@ -832,8 +1064,13 @@ class TAAC2025Dataset(BaseDataset):
             meta = json.loads(str(data["meta"]))
             user_ids = data["user_ids"]
             item_sequences = data["item_sequences"].tolist()
+            # 向后兼容：旧缓存可能没有 action_sequences
+            if "action_sequences" in data:
+                action_sequences = data["action_sequences"].tolist()
+            else:
+                action_sequences = []
             logger.info("Loaded preprocessed sequences from cache: %s", cache_path)
-            return meta, user_ids, item_sequences
+            return meta, user_ids, item_sequences, action_sequences
         except Exception as e:
             logger.warning("Failed to load cache: %s", e)
             return None
@@ -844,24 +1081,30 @@ class TAAC2025Dataset(BaseDataset):
         meta: Dict,
         user_ids: np.ndarray,
         item_sequences: List[np.ndarray],
+        action_sequences: Optional[List[np.ndarray]] = None,
     ) -> None:
         """Save preprocessed compact sequences to cache."""
         try:
-            np.savez(
-                cache_path,
-                meta=np.array(json.dumps(meta)),
-                user_ids=user_ids,
-                item_sequences=np.array(item_sequences, dtype=object),
-            )
+            save_kwargs: Dict[str, Any] = {
+                "meta": np.array(json.dumps(meta)),
+                "user_ids": user_ids,
+                "item_sequences": np.array(item_sequences, dtype=object),
+            }
+            if action_sequences:
+                save_kwargs["action_sequences"] = np.array(
+                    action_sequences, dtype=object,
+                )
+            np.savez(cache_path, **save_kwargs)
             logger.info("Saved preprocessed sequences to cache: %s", cache_path)
         except Exception as e:
             logger.warning("Failed to save cache: %s", e)
 
     def _load_raw(self) -> Dict[str, Any]:
-        """Return manifest + seq lazy handle (backward-compatible with _prepare_splits).
+        """Return manifest + seq + feature table handles.
 
-        Previously returned only {"seq": ds_seq}; now also includes manifest
-        so that EDA/subset-aware code paths can discover the full schema.
+        Loads seq, user_feat, and item_feat datasets from HuggingFace.
+        Feature tables are loaded lazily — only Arrow handles are returned,
+        no data is deserialized until _prepare_splits processes them.
         """
         try:
             from datasets import load_dataset
@@ -874,207 +1117,442 @@ class TAAC2025Dataset(BaseDataset):
         manifest = self.get_schema_manifest()
         logger.info("Loading %s seq split from HuggingFace …", self._repo_id)
         ds_seq = load_dataset(
-            self._repo_id, "seq", split="train", cache_dir=self.root_dir
+            self._repo_id, "seq", split="train", cache_dir=self.root_dir,
         )
-        return {"manifest": manifest, "seq": ds_seq}
+
+        # 尝试加载特征表（失败不阻塞，优雅降级）
+        ds_user = None
+        ds_item = None
+        try:
+            ds_user = load_dataset(
+                self._repo_id, "user_feat", split="train", cache_dir=self.root_dir,
+            )
+            logger.info("Loaded user_feat table (%d rows)", len(ds_user))
+        except Exception:
+            logger.warning("user_feat table unavailable, HyFormer 将仅使用序列特征")
+
+        try:
+            ds_item = load_dataset(
+                self._repo_id, "item_feat", split="train", cache_dir=self.root_dir,
+            )
+            logger.info("Loaded item_feat table (%d rows)", len(ds_item))
+        except Exception:
+            logger.warning("item_feat table unavailable, HyFormer 将仅使用序列特征")
+
+        return {
+            "manifest": manifest,
+            "seq": ds_seq,
+            "user_feat": ds_user,
+            "item_feat": ds_item,
+        }
+
+    def _build_feature_dicts(
+        self, raw: Dict[str, Any], valid_user_ids: Set[int], valid_item_ids: Set[int],
+    ) -> Tuple[Optional[Dict[int, np.ndarray]], Optional[Dict[int, np.ndarray]],
+               Dict[str, Any], Dict[str, Any]]:
+        """从 Arrow 表构建特征查找字典和元数据。
+
+        仅在内存中保留出现在序列数据中的 user/item 特征，
+        大幅减少特征表的内存占用。
+
+        Returns:
+            (user_feat_dict, item_feat_dict, user_spec_meta, item_spec_meta)
+            如果特征表不可用，dict 为 None。
+        """
+        ds_user = raw.get("user_feat")
+        ds_item = raw.get("item_feat")
+
+        # --- 用户特征 ---
+        user_feat_dict: Optional[Dict[int, np.ndarray]] = None
+        user_spec_meta: Dict[str, Any] = {
+            "specs": [], "dim": 0, "groups": [], "scalar_cols": [], "list_cols": [],
+            "list_max_lens": {},
+        }
+        if ds_user is not None:
+            try:
+                user_table = ds_user.data
+                user_id_arr = _extract_scalar_int_col(user_table, "user_id")
+
+                # 扫描各列最大值（仅对有效用户）
+                scalar_max: Dict[str, int] = {}
+                list_max: Dict[str, int] = {}
+                list_lens: Dict[str, int] = {}
+
+                # 预先收集每列的原始 numpy 数组
+                scalar_arrays: Dict[str, np.ndarray] = {}
+                list_flat: Dict[str, np.ndarray] = {}
+                list_offsets: Dict[str, np.ndarray] = {}
+                for col in _USER_FEAT_SCALAR_COLS:
+                    arr = _extract_scalar_int_col(user_table, col)
+                    scalar_arrays[col] = arr
+                    scalar_max[col] = int(arr.max())
+                for col in _USER_FEAT_LIST_COLS:
+                    flat, offsets, ml = _extract_list_int_col(user_table, col)
+                    list_flat[col] = flat
+                    list_offsets[col] = offsets
+                    list_lens[col] = ml
+                    if len(flat) > 0:
+                        list_max[col] = int(flat.max())
+                    else:
+                        list_max[col] = 0
+
+                # 构建 feature_specs
+                specs, total_dim = _build_feature_specs_from_arrays(
+                    scalar_max, list_max, list_lens,
+                    _USER_FEAT_SCALAR_COLS, _USER_FEAT_LIST_COLS,
+                )
+                user_spec_meta = {
+                    "specs": specs,
+                    "dim": total_dim,
+                    "groups": [[i] for i in range(len(specs))],
+                    "scalar_cols": list(_USER_FEAT_SCALAR_COLS),
+                    "list_cols": list(_USER_FEAT_LIST_COLS),
+                    "list_max_lens": list_lens,
+                }
+
+                # 构建查找字典（仅有效用户）
+                user_feat_dict = {}
+                n_rows = len(user_id_arr)
+                # 预分配零数组模板
+                zero_template = np.zeros(total_dim, dtype=np.int64)
+                for i in range(n_rows):
+                    uid = int(user_id_arr[i])
+                    if uid not in valid_user_ids:
+                        continue
+                    feat = zero_template.copy()
+                    for spec_idx, col in enumerate(_USER_FEAT_SCALAR_COLS):
+                        _, offset, _length = specs[spec_idx]
+                        feat[offset] = scalar_arrays[col][i]
+                    offset_scalar = len(_USER_FEAT_SCALAR_COLS)
+                    for list_idx, col in enumerate(_USER_FEAT_LIST_COLS):
+                        spec_idx = offset_scalar + list_idx
+                        _, offset, length = specs[spec_idx]
+                        start = int(list_offsets[col][i])
+                        end = int(list_offsets[col][i + 1])
+                        vals = list_flat[col][start:end]
+                        n_vals = min(len(vals), length)
+                        feat[offset:offset + n_vals] = vals[:n_vals]
+                    user_feat_dict[uid] = feat
+
+                logger.info(
+                    "Built user feature dict: %d users × %d dims",
+                    len(user_feat_dict), total_dim,
+                )
+            except Exception as e:
+                logger.warning("Failed to build user feature dict: %s", e)
+                user_feat_dict = None
+
+        # --- 物品特征 ---
+        item_feat_dict: Optional[Dict[int, np.ndarray]] = None
+        item_spec_meta: Dict[str, Any] = {
+            "specs": [], "dim": 0, "groups": [], "scalar_cols": [], "list_cols": [],
+            "list_max_lens": {},
+        }
+        if ds_item is not None:
+            try:
+                item_table = ds_item.data
+                item_id_arr = _extract_scalar_int_col(item_table, "item_id")
+
+                # 所有物品特征列都是标量 int64
+                scalar_max_i: Dict[str, int] = {}
+                scalar_arrays_i: Dict[str, np.ndarray] = {}
+                for col in _ITEM_FEAT_COLS:
+                    arr = _extract_scalar_int_col(item_table, col)
+                    scalar_arrays_i[col] = arr
+                    scalar_max_i[col] = int(arr.max())
+
+                specs_i, total_dim_i = _build_feature_specs_from_arrays(
+                    scalar_max_i, {}, {},
+                    _ITEM_FEAT_COLS, [],
+                )
+                item_spec_meta = {
+                    "specs": specs_i,
+                    "dim": total_dim_i,
+                    "groups": [[i] for i in range(len(specs_i))],
+                    "scalar_cols": list(_ITEM_FEAT_COLS),
+                    "list_cols": [],
+                    "list_max_lens": {},
+                }
+
+                # 构建查找字典（仅有效物品）
+                item_feat_dict = {}
+                n_rows_i = len(item_id_arr)
+                zero_template_i = np.zeros(total_dim_i, dtype=np.int64)
+                for i in range(n_rows_i):
+                    iid = int(item_id_arr[i])
+                    if iid not in valid_item_ids:
+                        continue
+                    feat = zero_template_i.copy()
+                    for spec_idx, col in enumerate(_ITEM_FEAT_COLS):
+                        _, offset, _length = specs_i[spec_idx]
+                        feat[offset] = scalar_arrays_i[col][i]
+                    item_feat_dict[iid] = feat
+
+                logger.info(
+                    "Built item feature dict: %d items × %d dims",
+                    len(item_feat_dict), total_dim_i,
+                )
+            except Exception as e:
+                logger.warning("Failed to build item feature dict: %s", e)
+                item_feat_dict = None
+
+        return user_feat_dict, item_feat_dict, user_spec_meta, item_spec_meta
 
     def _prepare_splits(
         self, raw: Dict[str, Any]
     ) -> Tuple[Dataset[Any], Dataset[Any], Dataset[Any]]:
-        """Build user sequences from seq subset.
+        """Build user sequences + structured features.
 
-        TAAC2025 seq schema:
-            user_id: int64
-            seq: List<{item_id: int64, action_type: int32, timestamp: int64}>
+        CRITICAL: All intermediate storage uses numpy int64 arrays (8 B/int),
+        never Python lists (28 B/int).  This prevents OOM on 1M+ user datasets.
 
-        Memory optimization:
-            - Uses Arrow columnar extraction (no to_pydict deserialization)
-            - Stores compact user→items mapping instead of expanded sequences
-            - _SequenceSplit computes labeled samples on demand via __getitem__
-            - Cache stores compact mapping (1M entries vs 20M expanded dicts)
+        Single-pass from Arrow → numpy arrays, no dict-of-lists intermediate.
         """
-        # Check cache first
-        import pyarrow as pa
-
-        # Load candidate pool lazily (used for evaluation)
         candidate_pool = self.get_candidate_pool()
 
         cache_path = self._get_cache_path()
         cached = self._load_from_cache(cache_path)
         if cached:
-            meta, user_ids_np, item_sequences = cached
+            meta, user_ids_np, item_sequences, action_sequences = cached
             self._num_users = meta.get("num_users", 0)
             self._num_items = meta.get("num_items", 0)
             all_items = set(meta.get("all_items", []))
-            # Ensure item_sequences are numpy arrays
-            item_sequences = [np.array(s, dtype=np.int64) for s in item_sequences]
+            item_sequences = [
+                np.asarray(s, dtype=np.int64) for s in item_sequences
+            ]
+            if action_sequences:
+                action_sequences = [
+                    np.asarray(s, dtype=np.int64) for s in action_sequences
+                ]
         else:
-            # Process raw data
+            # --- Arrow 零拷贝提取 ---
             ds_seq = raw["seq"]
             total = len(ds_seq)
-            logger.info("Processing %d user sequences (first run, caching results)...", total)
-
-            # Build user → item sequence mapping
-            # Strategy: use pure Arrow columnar operations to extract item_id
-            # from nested List<Struct<item_id, ...>> without deserializing to
-            # Python dicts — this avoids the memory explosion from to_pydict().
-            user_seqs: Dict[int, List[int]] = {}
-            all_items: Set[int] = set()
+            logger.info(
+                "Processing %d user sequences (~%.1f GB raw, first run)...",
+                total,
+                total * 100 * 2 * 8 / (1024 ** 3),  # est: avg 100 items × 2 fields
+            )
 
             arrow_table = ds_seq.data
             n_rows = len(arrow_table)
-
-            # Get the two columns we need
             user_id_col = arrow_table.column("user_id")
             seq_col = arrow_table.column("seq")
-
-            # Flatten the List<Struct> to access the struct fields directly.
-            # seq_col is ChunkedArray<List<Struct<item_id: int64, ...>>>
-            # Concatenate chunks into a single array, then get offsets + values.
-            seq_chunks = seq_col.chunks
-            seq_combined = seq_chunks[0] if len(seq_chunks) == 1 else pa.concat_arrays(seq_chunks)
+            seq_combined = (
+                seq_col.chunks[0] if len(seq_col.chunks) == 1
+                else pa.concat_arrays(seq_col.chunks)
+            )
             offsets = seq_combined.offsets.to_numpy(zero_copy_only=False)
-            # The values (flat struct array) contains all struct elements
             flat_values = seq_combined.values
-
-            # Extract item_id and action_type fields from the flat struct array.
-            # This is a pure Arrow operation — no Python dict creation.
             flat_item_ids = flat_values.field("item_id").to_numpy(zero_copy_only=False)
             flat_action_types = flat_values.field("action_type").to_numpy(
-                zero_copy_only=False
+                zero_copy_only=False,
             )
-
-            # Also get user_ids as numpy
             user_ids_all = user_id_col.to_numpy(zero_copy_only=False)
 
-            # Now iterate per-user using offsets (no Python dict creation)
+            # --- 单次遍历：直接构建 numpy 数组列表 ---
+            uid_list: List[int] = []
+            seq_list: List[np.ndarray] = []
+            act_list: List[np.ndarray] = []
+            all_items_set: Set[int] = set()
+
+            min_seq = self.min_seq_len
+            min_action = self._min_action_type
             for i in range(n_rows):
                 uid = int(user_ids_all[i])
                 start = int(offsets[i])
-                end_offset = int(offsets[i + 1])
-                if start == end_offset:
+                end = int(offsets[i + 1])
+                if start == end:
                     continue
-                # Slice item_id and action_type for this user's sequence
-                slice_item_ids = flat_item_ids[start:end_offset]
-                slice_action_types = flat_action_types[start:end_offset]
-
-                # Filter: keep only items with action_type >= min_action_type
-                if self._min_action_type > 0:
-                    keep_mask = slice_action_types >= self._min_action_type
-                    slice_item_ids = slice_item_ids[keep_mask]
-                    if len(slice_item_ids) == 0:
+                iids = flat_item_ids[start:end]
+                acts = flat_action_types[start:end]
+                if min_action > 0:
+                    keep = acts >= min_action
+                    iids = iids[keep]
+                    acts = acts[keep]
+                    if len(iids) == 0:
                         continue
-
-                user_item_ids = slice_item_ids.tolist()
-                user_seqs[uid] = user_item_ids
-                all_items.update(user_item_ids)
-
+                if len(iids) < min_seq:
+                    continue
+                # 复制为自有 numpy 数组（解耦 Arrow 缓冲区）
+                uid_list.append(uid)
+                seq_list.append(iids.copy().astype(np.int64, copy=False))
+                # action_type 为 int32，先安全转 float 处理可能的 nan，再转 int64
+                act_list.append(
+                    np.nan_to_num(acts.copy(), nan=0).astype(np.int64, copy=False),
+                )
+                all_items_set.update(iids.tolist())
                 if i % 200_000 == 0 and i > 0:
-                    logger.debug(
-                        "Processed %d / %d users (%d items, action_type >= %d)",
-                        i, n_rows, len(all_items), self._min_action_type,
-                    )
+                    _log_memory("Processed %d/%d users", i, n_rows)
 
-            # Free Arrow memory eagerly
-            del arrow_table, seq_combined, flat_values, flat_item_ids, flat_action_types, offsets, user_ids_all
+            del arrow_table, seq_combined, flat_values
+            del flat_item_ids, flat_action_types, offsets, user_ids_all
+            gc.collect()
 
-            # Filter users with enough interactions
-            user_ids_list: List[int] = []
-            item_sequences_list: List[np.ndarray] = []
-            for uid, items in user_seqs.items():
-                if len(items) >= self.min_seq_len:
-                    user_ids_list.append(uid)
-                    item_sequences_list.append(np.array(items, dtype=np.int64))
-            del user_seqs  # free dict
-
-            self._num_users = len(user_ids_list)
-            self._num_items = len(all_items)
+            self._num_users = len(uid_list)
+            self._num_items = len(all_items_set)
+            all_items = all_items_set  # ← 将局部变量提升到 if/else 共享作用域
             logger.info(
-                "Built %d user sequences across %d unique items.",
-                self._num_users,
-                self._num_items,
+                "Built %d users × %d items.", self._num_users, self._num_items,
             )
 
-            # Shuffle users (not expanded sequences — much smaller)
+            # Shuffle — 只打乱索引
             rng = np.random.default_rng(42)
-            indices = np.arange(len(user_ids_list))
+            indices = np.arange(len(uid_list))
             rng.shuffle(indices)
-            user_ids_np = np.array(user_ids_list, dtype=np.int64)[indices]
-            item_sequences = [item_sequences_list[i] for i in indices]
-            del user_ids_list, item_sequences_list
+            user_ids_np = np.array(uid_list, dtype=np.int64)[indices]
+            item_sequences = [seq_list[i] for i in indices]
+            action_sequences = [act_list[i] for i in indices]
+            del uid_list, seq_list, act_list
+            gc.collect()
 
-            # Save compact mapping to cache (1M entries vs 20M expanded dicts)
             meta = {
                 "num_users": self._num_users,
                 "num_items": self._num_items,
-                "all_items": list(all_items),
+                "all_items": list(all_items_set),
             }
-            self._save_to_cache(cache_path, meta, user_ids_np, item_sequences)
+            self._save_to_cache(
+                cache_path, meta, user_ids_np, item_sequences, action_sequences,
+            )
+            _log_memory("Cache saved: %d users", self._num_users)
 
+        # ---- 加载特征表 ----
+        all_user_ids = set(int(uid) for uid in user_ids_np)
+        user_feat_dict, item_feat_dict, user_spec_meta, item_spec_meta = (
+            self._build_feature_dicts(raw, all_user_ids, all_items)
+        )
+
+        self._hyformer_schema_meta = {
+            "user_int_feature_specs": user_spec_meta.get("specs", []),
+            "item_int_feature_specs": item_spec_meta.get("specs", []),
+            "user_dense_dim": 0,
+            "item_dense_dim": 0,
+            "seq_vocab_sizes": {
+                _SEQ_DOMAIN_NAME: [self._num_items + 1, 3],
+            },
+            "user_ns_groups": user_spec_meta.get("groups", []),
+            "item_ns_groups": item_spec_meta.get("groups", []),
+            "seq_domains": [_SEQ_DOMAIN_NAME],
+            "num_users": self._num_users,
+            "num_items": self._num_items,
+        }
+
+        # ---- Split by user ----
         total_positions = sum(max(0, len(s) - 1) for s in item_sequences)
         n_train = int(total_positions * self.split_ratios[0])
         n_val = int(total_positions * self.split_ratios[1])
-
         logger.info(
-            "Splits: train=%d, val=%d, test=%d (total positions: %d)",
+            "Splits: train=%d, val=%d, test=%d (positions=%d)",
             n_train, n_val, total_positions - n_train - n_val, total_positions,
         )
 
-        # Split by user for memory efficiency — each user goes to one split only.
-        # This avoids creating overlapping sequence views.
         self._all_items = all_items
         item_pool = torch.as_tensor(sorted(all_items), dtype=torch.long)
 
-        # Assign users to splits based on cumulative position counts
         cum = 0
-        train_user_ids: List[int] = []
+        train_uids: List[int] = []
         train_seqs: List[np.ndarray] = []
-        val_user_ids: List[int] = []
+        train_acts: List[np.ndarray] = []
+        val_uids: List[int] = []
         val_seqs: List[np.ndarray] = []
-        test_user_ids: List[int] = []
+        val_acts: List[np.ndarray] = []
+        test_uids: List[int] = []
         test_seqs: List[np.ndarray] = []
+        test_acts: List[np.ndarray] = []
 
-        for uid, seq in zip(user_ids_np, item_sequences, strict=False):
+        for uid, seq, act in zip(
+            user_ids_np, item_sequences, action_sequences, strict=True,
+        ):
             n_pos = max(0, len(seq) - 1)
             if n_pos == 0:
                 continue
             cum += n_pos
-            if cum <= n_train:
-                train_user_ids.append(int(uid))
+            target = (
+                train_uids if cum <= n_train
+                else val_uids if cum <= n_train + n_val
+                else test_uids
+            )
+            target.append(int(uid))
+            if target is train_uids:
                 train_seqs.append(seq)
-            elif cum <= n_train + n_val:
-                val_user_ids.append(int(uid))
+                train_acts.append(act)
+            elif target is val_uids:
                 val_seqs.append(seq)
+                val_acts.append(act)
             else:
-                test_user_ids.append(int(uid))
                 test_seqs.append(seq)
+                test_acts.append(act)
 
-        train_ds = _SequenceSplit(
-            user_ids=np.array(train_user_ids, dtype=np.int64),
+        train_ds = _StructuredSequenceSplit(
+            user_ids=np.array(train_uids, dtype=np.int64),
             item_sequences=train_seqs,
+            action_sequences=train_acts,
             item_pool=item_pool,
             max_seq_len=self.max_seq_len,
             neg_sample_count=self.neg_sample_count,
             candidate_pool=candidate_pool,
+            user_feat_dict=user_feat_dict,
+            item_feat_dict=item_feat_dict,
         )
-        val_ds = _SequenceSplit(
-            user_ids=np.array(val_user_ids, dtype=np.int64),
+        val_ds = _StructuredSequenceSplit(
+            user_ids=np.array(val_uids, dtype=np.int64),
             item_sequences=val_seqs,
+            action_sequences=val_acts,
             item_pool=item_pool,
             max_seq_len=self.max_seq_len,
             neg_sample_count=self.neg_sample_count,
             candidate_pool=candidate_pool,
+            user_feat_dict=user_feat_dict,
+            item_feat_dict=item_feat_dict,
         )
-        test_ds = _SequenceSplit(
-            user_ids=np.array(test_user_ids, dtype=np.int64),
+        test_ds = _StructuredSequenceSplit(
+            user_ids=np.array(test_uids, dtype=np.int64),
             item_sequences=test_seqs,
+            action_sequences=test_acts,
             item_pool=item_pool,
             max_seq_len=self.max_seq_len,
             neg_sample_count=self.neg_sample_count,
             candidate_pool=candidate_pool,
+            user_feat_dict=user_feat_dict,
+            item_feat_dict=item_feat_dict,
         )
 
+        _log_memory(
+            "Splits ready: train=%d val=%d test=%d",
+            len(train_uids), len(val_uids), len(test_uids),
+        )
         return train_ds, val_ds, test_ds
+
+    # ----- schema metadata (HyFormer 集成点) -------------------------------
+
+    def get_schema_metadata(self) -> Dict[str, Any]:
+        """返回结构化特征规格，供 HyFormer 等模型初始化使用。
+
+        必须在 .load() 之后调用，否则返回空 spec。
+
+        Returns:
+            包含 user_int_feature_specs, item_int_feature_specs,
+            seq_vocab_sizes, user_ns_groups, item_ns_groups 等字段的字典。
+        """
+        if hasattr(self, "_hyformer_schema_meta"):
+            return self._hyformer_schema_meta
+        # .load() 未调用时返回最小合法 spec（无序列模式）
+        logger.warning(
+            "get_schema_metadata() called before .load(); "
+            "返回最小 schema（无序列模式）",
+        )
+        return {
+            "user_int_feature_specs": [(2, 0, 1)],
+            "item_int_feature_specs": [(2, 0, 1)],
+            "user_dense_dim": 0,
+            "item_dense_dim": 0,
+            "seq_vocab_sizes": {},
+            "user_ns_groups": [[0]],
+            "item_ns_groups": [[0]],
+            "seq_domains": [],
+            "num_users": self.num_users,
+            "num_items": self.num_items,
+        }
 
     # ----- iteration -----------------------------------------------------
 

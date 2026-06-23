@@ -27,6 +27,7 @@ from recsys.training.losses import (  # noqa: F401
 )
 from recsys.training.optimizers import (  # noqa: F401
     OptimizerConfig,
+    build_dual_optimizers,
     build_optimizer,
     build_param_groups,
     get_optimizer,
@@ -58,6 +59,7 @@ __all__ = [
     "get_loss",
     "list_losses",
     "OptimizerConfig",
+    "build_dual_optimizers",
     "build_optimizer",
     "build_param_groups",
     "get_optimizer",

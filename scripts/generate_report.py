@@ -6,7 +6,7 @@
 Usage:
     uv run python scripts/generate_report.py --input outputs/benchmarks/benchmark_classical/
     uv run python scripts/generate_report.py --input outputs/benchmarks/benchmark_all/
-    uv run python scripts/generate_report.py --input outputs/experiments/ --output reports/
+    uv run python scripts/generate_report.py --input outputs/runs/ --output reports/
 """
 
 from __future__ import annotations

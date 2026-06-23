@@ -165,7 +165,7 @@ outputs/benchmarks/{benchmark_name}/
 └── report.html            # 交互式摘要页
 ```
 
-每个 run 的独立产物仍位于 `outputs/experiments/{run_id}/` 下。
+每个 run 的独立产物仍位于 `outputs/runs/{run_id}/` 下。
 
 ## 数据管线性能 Benchmark
 

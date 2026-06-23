@@ -191,7 +191,7 @@ class PreprocessingConfig:
     @property
     def cache_root(self) -> Path:
         root = self.cache.cache_root or os.path.join(
-            self.storage.output_dir or "./outputs/data_cache", ".preprocess_cache"
+            self.storage.output_dir or "./outputs/cache", ".preprocess_cache"
         )
         return Path(root)
 
@@ -638,7 +638,7 @@ def materialize_to_columnar(
     """Convert a source file (CSV/Parquet) to a columnar format with compression."""
     fmt = config.storage.format
     comp = config.storage.compression
-    output_dir = Path(config.storage.output_dir or "./outputs/data_cache")
+    output_dir = Path(config.storage.output_dir or "./outputs/cache")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     stem = Path(source_path).stem

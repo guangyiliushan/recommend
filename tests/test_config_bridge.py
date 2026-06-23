@@ -60,7 +60,7 @@ def test_recbench_to_experiment_config_basic():
     assert exp.dataset_name == "taac2026_data_sample"
     assert exp.model_name == "itemcf"
     assert exp.seed == 43
-    assert exp.output_dir == "./outputs"
+    assert exp.output_dir == "./outputs/runs"
 
 
 def test_recbench_to_experiment_config_split_mode():

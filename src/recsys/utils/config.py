@@ -110,11 +110,19 @@ class EvaluationConfig:
     """评估配置。"""
 
     metrics: List[str] = field(default_factory=lambda: ["roc_auc", "log_loss"])
+    primary_metric: Optional[str] = None
     ranking_k: Optional[List[int]] = None  # e.g. [5, 10, 20]
     threshold: float = 0.5
+    threshold_strategy: str = "fixed"  # "fixed" | "tuned_on_val" | "per_task"
     generate_curves: bool = True
+    curve_types: List[str] = field(default_factory=lambda: ["roc", "pr"])
+    average: str = "binary"  # "binary" | "macro" | "micro" | "weighted"
+    pos_label: int = 1
+    per_group_metrics: bool = True
+    sample_weight_enabled: bool = False
     statistical_test: Optional[str] = None
-
+    save_predictions: bool = True
+    save_curves: bool = True
 
 @dataclass
 class RuntimeConfig:
@@ -142,7 +150,7 @@ class RecBenchConfig:
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
 
     # 元信息（运行时填充）
-    _raw_omegaconf: Optional[DictConfig] = field(default=None, repr=False, compare=False)
+    _raw_omegaconf: Any = field(default=None, repr=False, compare=False)
     _resolved_at: Optional[str] = field(default=None, repr=False, compare=False)
     _config_hash: Optional[str] = field(default=None, repr=False, compare=False)
 
@@ -412,7 +420,7 @@ def resolve_paths(config: RecBenchConfig, cwd: str) -> RecBenchConfig:
 def get_config_snapshot(config: RecBenchConfig) -> Dict[str, Any]:
     """返回可序列化的配置快照。
 
-    用于写入 outputs/experiments/{run_id}/config.yaml。
+    用于写入 outputs/runs/{run_id}/config.yaml。
 
     Parameters
     ----------
@@ -488,12 +496,33 @@ def recbench_to_experiment_config(
         ExperimentConfig as PipelineExperimentConfig,
     )
 
+    # 构建 evaluation_config，仅传递非 None 值以保留 pipeline 默认值
+    eval_cfg: Dict[str, Any] = {
+        "metrics": list(config.evaluation.metrics),
+        "threshold": config.evaluation.threshold,
+        "threshold_strategy": config.evaluation.threshold_strategy,
+        "ranking_k": (list(config.evaluation.ranking_k)
+                      if config.evaluation.ranking_k else [10]),
+        "generate_curves": config.evaluation.generate_curves,
+        "curve_types": list(config.evaluation.curve_types),
+        "average": config.evaluation.average,
+        "pos_label": config.evaluation.pos_label,
+        "per_group_metrics": config.evaluation.per_group_metrics,
+        "sample_weight_enabled": config.evaluation.sample_weight_enabled,
+        "save_predictions": config.evaluation.save_predictions,
+        "save_curves": config.evaluation.save_curves,
+    }
+    if config.evaluation.primary_metric is not None:
+        eval_cfg["primary_metric"] = config.evaluation.primary_metric
+    if config.evaluation.statistical_test is not None:
+        eval_cfg["statistical_test"] = config.evaluation.statistical_test
+
     return PipelineExperimentConfig(
         experiment_name=config.experiment.name,
         dataset_name=config.data.name,
         model_name=config.model.name,
         seed=config.runtime.seed,
-        output_dir=config.runtime.output_root,
+        output_dir=f"{config.runtime.output_root}/runs",
         data_config={
             "root_dir": config.data.data_dir,
             "split_mode": config.data.split_mode,
@@ -515,12 +544,7 @@ def recbench_to_experiment_config(
             "weight_decay": config.training.weight_decay,
             "warmup_epochs": config.training.warmup_epochs,
         },
-        evaluation_config={
-            "metrics": list(config.evaluation.metrics),
-            "ranking_k": (list(config.evaluation.ranking_k)
-                          if config.evaluation.ranking_k else [10]),
-            "generate_curves": config.evaluation.generate_curves,
-        },
+        evaluation_config=eval_cfg,
         runtime_config={
             "device": config.runtime.device,
             "seed": config.runtime.seed,

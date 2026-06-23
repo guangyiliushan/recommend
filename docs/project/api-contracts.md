@@ -289,7 +289,7 @@ cfg = ExperimentConfig(
     dataset_name="taac2026_data_sample",
     model_name="itemcf",
     seed=42,
-    output_dir="./outputs/experiments",
+    output_dir="./outputs/runs",
     data_config={"root_dir": "./data", "split_mode": "temporal"},
 )
 

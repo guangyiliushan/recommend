@@ -33,7 +33,7 @@ outputs/data-benchmarks/{run_id}/    # 数据管线性能基准
 
 配置快照在实验开始时（CONFIG 阶段）写入，内容包含冻结后的完整配置树以及三条元信息：`_meta.schema_version`（快照结构版本号）、`_meta.resolved_at`（解析完成时间 ISO 8601 格式）和 `_meta.config_hash`（配置内容的 MD5 短哈希）。
 
-**路径**：`outputs/experiments/{run_id}/config.yaml`
+**路径**：`outputs/runs/{run_id}/config.yaml`
 
 **恢复角色**：Benchmark 的恢复判断会读取此文件中的 `config_hash` 与当前请求的配置哈希对比。若两者不一致，即使 `status.json` 为 `succeeded`，该 run 也会被标记为需要重新执行。
 
@@ -41,7 +41,7 @@ outputs/data-benchmarks/{run_id}/    # 数据管线性能基准
 
 状态文件在实验开始时写入初始状态（`running`），在结束时更新为最终状态（`succeeded` 或 `failed`）。
 
-**路径**：`outputs/experiments/{run_id}/status.json`
+**路径**：`outputs/runs/{run_id}/status.json`
 
 **状态值**：`pending`（初始）、`running`（执行中）、`succeeded`（成功完成）、`failed`（执行失败）、`skipped`（被 Benchmark 跳过）。
 
@@ -53,7 +53,7 @@ outputs/data-benchmarks/{run_id}/    # 数据管线性能基准
 
 评估结果在 ARTIFACT 阶段写入，内容来自 `EvaluationResult` 的序列化输出。
 
-**路径**：`outputs/experiments/{run_id}/metrics.json`
+**路径**：`outputs/runs/{run_id}/metrics.json`
 
 **关键字段**：`summary_metrics`（主汇总指标字典）、`task_metrics`（分任务指标，multitask 场景每个任务头独立一组）、`group_metrics`（分段诊断结果）、`curve_artifacts`（曲线数据引用，numpy 数组已转为列表）、`metadata`（评估元信息）、`warnings` 和 `errors`（评估过程中的警告与错误）。
 
@@ -63,7 +63,7 @@ outputs/data-benchmarks/{run_id}/    # 数据管线性能基准
 
 预测结果以 Parquet 列式格式保存，列结构根据任务类型自动调整。
 
-**路径**：`outputs/experiments/{run_id}/predictions.parquet`
+**路径**：`outputs/runs/{run_id}/predictions.parquet`
 
 **列结构按任务类型**：
 
@@ -77,7 +77,7 @@ outputs/data-benchmarks/{run_id}/    # 数据管线性能基准
 
 曲线目录在 ARTIFACT 阶段写入，每个曲线一个 JSON 文件。
 
-**路径**：`outputs/experiments/{run_id}/curves/`
+**路径**：`outputs/runs/{run_id}/curves/`
 
 **典型内容**：
 - `roc_curve.json`：ROC 曲线的 x/y 数据点数组和标签
@@ -91,7 +91,7 @@ outputs/data-benchmarks/{run_id}/    # 数据管线性能基准
 
 检查点目录仅训练型路径产生（如 HyFormer），由 PyTorch Lightning 的 `ModelCheckpoint` 回调自动管理。
 
-**路径**：`outputs/experiments/{run_id}/checkpoints/`
+**路径**：`outputs/runs/{run_id}/checkpoints/`
 
 **内容**：最佳模型权重文件（基于监控指标 `val_loss`，文件名格式为 `best-{epoch}-{monitor}.ckpt`）和可选的最后一个 epoch 的检查点文件。检查点目录由 `build_callbacks()` 在训练开始时创建。
 
@@ -99,7 +99,7 @@ outputs/data-benchmarks/{run_id}/    # 数据管线性能基准
 
 日志目录由 `setup_logging()` 函数在 BOOTSTRAP 阶段初始化，贯穿实验全过程。
 
-**路径**：`outputs/experiments/{run_id}/logs/`
+**路径**：`outputs/runs/{run_id}/logs/`
 
 **文件清单**：
 

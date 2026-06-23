@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from recsys.pipeline.experiment import (
     ExperimentConfig,
@@ -96,7 +96,7 @@ class BenchmarkConfig:
 
     # 输出
     output_root: str = "./outputs"
-    experiment_output_dir: str = "./outputs/experiments"
+    experiment_output_dir: str = "./outputs/runs"
 
 
 @dataclass
@@ -245,7 +245,7 @@ def plan_runs(
     for cfg in configs:
         cfg.freeze()
         run_id = generate_run_id(cfg)
-        run_dir = Path(output_root) / "experiments" / run_id
+        run_dir = Path(output_root) / "runs" / run_id
 
         should_skip = False
         skip_reason: Optional[str] = None
@@ -349,11 +349,34 @@ def _try_import_tqdm():
         from tqdm import tqdm as _tqdm
         return _tqdm
     except ImportError:
-        return lambda it, **kw: it
+
+        class _NoopTqdm:
+            """tqdm 不可用时的空进度条包装器，兼容迭代器与上下文管理器用法。"""
+
+            def __init__(self, it: Any = None, **kw: Any) -> None:
+                _ = kw  # 接受 tqdm 的关键字参数（total/desc/unit），不使用
+                self.it = it
+
+            def __iter__(self) -> Any:
+                if self.it is not None:
+                    return iter(self.it)
+                return iter(())
+
+            def __enter__(self) -> "_NoopTqdm":
+                return self
+
+            def __exit__(self, *args: Any) -> None:
+                pass
+
+            def update(self, n: int = 1) -> None:
+                pass
+
+        return _NoopTqdm  # type: ignore[return-value]
 
 
-def _execute_one(plan: RunPlan, idx: int, total: int) -> ExperimentResult:
+def _execute_one(plan: RunPlan, idx: int = 0, total: int = 0) -> ExperimentResult:
     """执行单个 run plan（供并发调度器消费）。"""
+    del idx, total  # 保留签名兼容性，实际未使用
     if plan.should_skip:
         return collect_skipped_result(plan.run_id, plan.config)
 
@@ -389,7 +412,7 @@ def execute_runs_parallel(
     使用 ThreadPoolExecutor，每个 run 一个 future。
     失败隔离：单个 run 失败不阻塞其他。
     """
-    results: List[ExperimentResult] = []
+    results: List[Tuple[int, ExperimentResult]] = []
     total = len(plans)
     tqdm = _try_import_tqdm()
 

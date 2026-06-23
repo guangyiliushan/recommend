@@ -133,7 +133,7 @@ def test_run_experiment_itemcf_real(tmp_path, monkeypatch):
 # schema_metadata 传递测试
 # ------------------------------------------------------------------
 
-def test_pipeline_passes_dense_remap_metadata_to_hyformer(monkeypatch):
+def test_pipeline_passes_dense_remap_metadata_to_hyformer(monkeypatch, tmp_path):
     """确认 pipeline 把 TAAC2026 dense remap 元信息正确传给 HyFormer。"""
     import torch
     from torch.utils.data import DataLoader
@@ -205,7 +205,7 @@ def test_pipeline_passes_dense_remap_metadata_to_hyformer(monkeypatch):
         dataset_name="fake_dense",
         model_name="hyformer",
         seed=42,
-        output_dir="./outputs/test_meta",
+        output_dir=str(tmp_path / "test_meta"),
         data_config={},
         training_config={"epochs": 1, "batch_size": 4, "learning_rate": 1e-3},
         evaluation_config={"generate_curves": False},

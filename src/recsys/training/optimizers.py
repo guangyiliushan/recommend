@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import torch.nn as nn
 from torch.optim import SGD, Adagrad, Adam, AdamW, Optimizer
@@ -54,6 +54,7 @@ class OptimizerConfig:
     momentum: float = 0.9
     use_lion: bool = False
     param_group_config: Optional[Dict[str, Any]] = None
+    sparse_lr: float = 0.05  # Adagrad 稀疏参数学习率（仅 dual 模式）
 
 
 # ============================================================================
@@ -278,3 +279,40 @@ def build_optimizer(
 def list_optimizers() -> list:
     """列出所有已支持的 optimizer 名称。"""
     return sorted(_OPTIMIZER_MAP.keys())
+
+
+def build_dual_optimizers(
+    model: nn.Module,
+    config: OptimizerConfig,
+    sparse_lr: float = 0.05,
+) -> Tuple[Adagrad, AdamW]:
+    """构建 Adagrad(sparse) + AdamW(dense) 双优化器。
+
+    检测 model.get_sparse_params() / get_dense_params()，
+    分别构建 Adagrad 和 AdamW，返回二元组供 Lightning 多优化器使用。
+
+    Parameters
+    ----------
+    model : nn.Module
+        模型实例，需实现 get_sparse_params() 和 get_dense_params()。
+    config : OptimizerConfig
+        密集参数配置。
+    sparse_lr : float
+        稀疏参数学习率。
+
+    Returns
+    -------
+    Tuple[Adagrad, AdamW]
+        (稀疏参数 Adagrad 优化器, 密集参数 AdamW 优化器)
+    """
+    sparse_params = model.get_sparse_params()
+    dense_params = model.get_dense_params()
+    sparse_opt = Adagrad(sparse_params, lr=sparse_lr)
+    dense_opt = AdamW(
+        dense_params,
+        lr=config.lr,
+        betas=config.betas,
+        eps=config.eps,
+        weight_decay=config.weight_decay,
+    )
+    return sparse_opt, dense_opt

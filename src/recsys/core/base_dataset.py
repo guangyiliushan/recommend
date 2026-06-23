@@ -18,6 +18,63 @@ from typing import Any, Dict, List, Optional, Tuple, TypeVar
 
 import torch
 from torch.utils.data import DataLoader, Dataset
+from torch.utils.data._utils.collate import default_collate
+
+
+def collate_nested_dicts(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Custom collate function that handles nested dicts of tensors.
+
+    PyTorch's default_collate handles flat dicts but can struggle with
+    deeply nested dict-of-dict structures (e.g., seq_data = {domain: tensor}).
+    This function pre-processes nested dicts before delegating to default_collate.
+
+    Also handles empty dicts and mixed-type batches gracefully.
+    """
+    if not batch:
+        return {}
+
+    # Collect all keys across the batch
+    all_keys: set = set()
+    for item in batch:
+        all_keys.update(item.keys())
+
+    result: Dict[str, Any] = {}
+    for key in all_keys:
+        values = [item.get(key) for item in batch]
+
+        # If all values are dicts, merge them recursively
+        if all(isinstance(v, dict) for v in values if v is not None):
+            # Collect sub-keys across all non-None dicts
+            sub_keys: set = set()
+            for v in values:
+                if isinstance(v, dict):
+                    sub_keys.update(v.keys())
+
+            merged: Dict[str, Any] = {}
+            for sk in sub_keys:
+                sub_vals = []
+                for v in values:
+                    if isinstance(v, dict) and sk in v:
+                        sub_vals.append(v[sk])
+                    else:
+                        sub_vals.append(torch.empty(0))
+                try:
+                    merged[sk] = default_collate(sub_vals)
+                except (TypeError, RuntimeError):
+                    merged[sk] = sub_vals
+            result[key] = merged
+        else:
+            # Standard collation for tensors and other types
+            non_none = [v for v in values if v is not None]
+            if non_none:
+                try:
+                    result[key] = default_collate([v if v is not None else torch.empty(0) for v in values])
+                except (TypeError, RuntimeError):
+                    result[key] = values
+            else:
+                result[key] = None
+
+    return result
 
 
 class BaseDataset(Dataset[Dict[str, torch.Tensor]], ABC):
@@ -123,13 +180,18 @@ class BaseDataset(Dataset[Dict[str, torch.Tensor]], ABC):
         shuffle: bool = True,
         **kwargs: Any,
     ) -> DataLoader:
-        """Return a DataLoader for *split* ('train' / 'val' / 'test' / 'full')."""
+        """Return a DataLoader for *split* ('train' / 'val' / 'test' / 'full').
+
+        Uses collate_nested_dicts as the default collate_fn to handle
+        nested dict structures (e.g., seq_data = {domain: tensor}) correctly.
+        """
         ds = self.get_split(split)
         dl_kwargs: Dict[str, Any] = dict(
             batch_size=batch_size,
             num_workers=num_workers,
             shuffle=(split == "train" and shuffle),
             pin_memory=True,
+            collate_fn=collate_nested_dicts,
         )
         dl_kwargs.update(kwargs)
         return DataLoader(ds, **dl_kwargs)

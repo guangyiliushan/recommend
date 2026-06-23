@@ -81,8 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--experiment-output-dir",
-        default="./outputs/experiments",
-        help="单实验输出目录 (默认: ./outputs/experiments)",
+        default="./outputs/runs",
+        help="单实验输出目录 (默认: ./outputs/runs)",
     )
     parser.add_argument(
         "--hydra",
